@@ -71,7 +71,8 @@ class SCSCFSproutletTsx;
 class SCSCFSproutlet : public Sproutlet
 {
 public:
-  SCSCFSproutlet(const std::string& scscf_uri,
+  SCSCFSproutlet(const std::string& scscf_cluster_uri,
+                 const std::string& scscf_node_uri,
                  const std::string& icscf_uri,
                  const std::string& bgcf_uri,
                  int port,
@@ -96,8 +97,11 @@ private:
   /// Returns the AS chain table for this system.
   AsChainTable* as_chain_table() const;
 
-  /// Returns the configured S-CSCF URI for this system.
-  const pjsip_uri* scscf_uri() const;
+  /// Returns the configured S-CSCF cluster URI for this system.
+  const pjsip_uri* scscf_cluster_uri() const;
+
+  /// Returns the configured S-CSCF node URI for this system.
+  const pjsip_uri* scscf_node_uri() const;
 
   /// Returns the configured I-CSCF URI for this system.
   const pjsip_uri* icscf_uri() const;
@@ -111,10 +115,17 @@ private:
                     RegStore::AoR** aor_data,
                     SAS::TrailId trail);
 
+  /// Removes the specified binding for the specified Address of Record from
+  /// the local or remote registration stores.
+  void remove_binding(const std::string& aor,
+                      const std::string& binding_id,
+                      SAS::TrailId trail);
+
   /// Read data for a public user identity from the HSS.
   bool read_hss_data(const std::string& public_id,
                      bool& registered,
                      std::vector<std::string>& uris,
+                     std::vector<std::string>& aliases,
                      Ifcs& ifcs,
                      std::deque<std::string>& ccfs,
                      std::deque<std::string>& ecfs,
@@ -130,13 +141,20 @@ private:
   ///                             or called party).
   ACR* get_acr(SAS::TrailId trail, Initiator initiator, NodeRole role);
 
-  bool is_user_numeric(const std::string& user);
-  bool is_user_global(const std::string& user);
-
   friend class SCSCFSproutletTsx;
 
-  pjsip_uri* _scscf_uri;
+  /// A URI which routes to the S-CSCF cluster.
+  pjsip_uri* _scscf_cluster_uri;
+
+  /// A URI which routes to this particular S-CSCF node.  This must be
+  /// constructed using an IP address or a domain name which resolves to this
+  /// Sprout node only.
+  pjsip_uri* _scscf_node_uri;
+
+  /// A URI which routes to the URI cluster.
   pjsip_uri* _icscf_uri;
+
+  /// A URI which routes to the BGCF.
   pjsip_uri* _bgcf_uri;
 
   RegStore* _store;
@@ -238,12 +256,14 @@ private:
   /// Record-Route the S-CSCF sproutlet into a dialog.  The parameter passed
   /// will be attached to the Record-Route and can be used to recover the
   /// billing role that is in use on subsequent in-dialog messages.
-  void add_record_route(pjsip_msg* msg,
-                        const std::string& billing_role);
+  void add_record_route(pjsip_msg* msg, NodeRole);
 
   /// Retrieve the billing role for the incoming message.  This should have been
   /// set during session initiation.
-  void get_billing_role(std::string& billing_role);
+  NodeRole get_billing_role();
+
+  /// Adds a second P-Asserted-Identity header to a message when required.
+  void add_second_p_a_i_hdr(pjsip_msg* msg);
 
   /// Pointer to the parent SCSCFSproutlet object - used for various operations
   /// that require access to global configuration or services.
@@ -263,6 +283,7 @@ private:
   bool _hss_data_cached;
   bool _registered;
   std::vector<std::string> _uris;
+  std::vector<std::string> _aliases;
   Ifcs _ifcs;
   std::deque<std::string> _ccfs;
   std::deque<std::string> _ecfs;

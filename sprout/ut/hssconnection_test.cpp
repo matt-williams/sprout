@@ -54,53 +54,55 @@ using namespace std;
 class HssConnectionTest : public BaseTest
 {
   FakeHttpResolver _resolver;
+  CommunicationMonitor _cm;
   HSSConnection _hss;
 
   HssConnectionTest() :
     _resolver("10.42.42.42"),
-    _hss("narcissus", &_resolver, NULL, NULL)
+    _cm(new Alarm("sprout", AlarmDef::SPROUT_HOMESTEAD_COMM_ERROR, AlarmDef::CRITICAL)),
+    _hss("narcissus", &_resolver, NULL, NULL, &_cm)
   {
     fakecurl_responses.clear();
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid42/reg-data", "{\"reqtype\": \"reg\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<RegistrationState>REGISTERED</RegistrationState>"
-      "<IMSSubscription>"
-      "<ServiceProfile>"
-      "<PublicIdentity>"
-      "<Identity>sip:123@example.com</Identity>"
-      "</PublicIdentity>"
-      "<PublicIdentity>"
-      "<Identity>sip:456@example.com</Identity>"
-      "</PublicIdentity>"
-        "<InitialFilterCriteria>"
-          "<TriggerPoint>"
-            "<ConditionTypeCNF>0</ConditionTypeCNF>"
-            "<SPT>"
-              "<ConditionNegated>0</ConditionNegated>"
-              "<Group>0</Group>"
-              "<Method>INVITE</Method>"
-              "<Extension></Extension>"
-            "</SPT>"
-          "</TriggerPoint>"
-          "<ApplicationServer>"
-            "<ServerName>mmtel.narcissi.example.com</ServerName>"
-            "<DefaultHandling>0</DefaultHandling>"
-          "</ApplicationServer>"
-        "</InitialFilterCriteria>"
-      "</ServiceProfile>"
-      "</IMSSubscription>"
-      "<ChargingAddresses>"
-        "<CCF priority=\"1\">ccf1</CCF>"
-        "<CCF priority=\"2\">ccf2</CCF>"
-        "<ECF priority=\"2\">ecf2</ECF>"
-        "<ECF priority=\"1\">ecf1</ECF>"
-      "</ChargingAddresses>"
+        "<RegistrationState>REGISTERED</RegistrationState>"
+        "<IMSSubscription>"
+          "<ServiceProfile>"
+            "<PublicIdentity>"
+              "<Identity>sip:123@example.com</Identity>"
+            "</PublicIdentity>"
+            "<PublicIdentity>"
+              "<Identity>sip:456@example.com</Identity>"
+            "</PublicIdentity>"
+            "<InitialFilterCriteria>"
+              "<TriggerPoint>"
+                "<ConditionTypeCNF>0</ConditionTypeCNF>"
+                "<SPT>"
+                  "<ConditionNegated>0</ConditionNegated>"
+                  "<Group>0</Group>"
+                  "<Method>INVITE</Method>"
+                  "<Extension></Extension>"
+                "</SPT>"
+              "</TriggerPoint>"
+              "<ApplicationServer>"
+                "<ServerName>mmtel.narcissi.example.com</ServerName>"
+                "<DefaultHandling>0</DefaultHandling>"
+              "</ApplicationServer>"
+            "</InitialFilterCriteria>"
+          "</ServiceProfile>"
+        "</IMSSubscription>"
+        "<ChargingAddresses>"
+          "<CCF priority=\"1\">ccf1</CCF>"
+          "<CCF priority=\"2\">ccf2</CCF>"
+          "<ECF priority=\"2\">ecf2</ECF>"
+          "<ECF priority=\"1\">ecf1</ECF>"
+        "</ChargingAddresses>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid43/reg-data", "{\"reqtype\": \"reg\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<RegistrationState>NOT_REGISTERED</RegistrationState>"
+        "<RegistrationState>NOT_REGISTERED</RegistrationState>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid42/reg-data", "")] = fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid42/reg-data", "{\"reqtype\": \"reg\"}")];
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid43/reg-data", "")] = fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid43/reg-data", "{\"reqtype\": \"reg\"}")];
@@ -111,32 +113,32 @@ class HssConnectionTest : public BaseTest
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid43_malformed/reg-data", "{\"reqtype\": \"reg\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<RegistrationState>REGISTERED</RegistrationState>"
-      "<NonsenseWord>"
-      "<ServiceProfile>"
-      "<PublicIdentity>"
-      "<Identity>sip:123@example.com</Identity>"
-      "</PublicIdentity>"
-      "<PublicIdentity>"
-      "<Identity>sip:456@example.com</Identity>"
-      "</PublicIdentity>"
-        "<InitialFilterCriteria>"
-          "<TriggerPoint>"
-            "<ConditionTypeCNF>0</ConditionTypeCNF>"
-            "<SPT>"
-              "<ConditionNegated>0</ConditionNegated>"
-              "<Group>0</Group>"
-              "<Method>INVITE</Method>"
-              "<Extension></Extension>"
-            "</SPT>"
-          "</TriggerPoint>"
-          "<ApplicationServer>"
-            "<ServerName>mmtel.narcissi.example.com</ServerName>"
-            "<DefaultHandling>0</DefaultHandling>"
-          "</ApplicationServer>"
-        "</InitialFilterCriteria>"
-      "</ServiceProfile>"
-      "</NonsenseWord>"
+        "<RegistrationState>REGISTERED</RegistrationState>"
+        "<NonsenseWord>"
+          "<ServiceProfile>"
+            "<PublicIdentity>"
+              "<Identity>sip:123@example.com</Identity>"
+            "</PublicIdentity>"
+            "<PublicIdentity>"
+              "<Identity>sip:456@example.com</Identity>"
+            "</PublicIdentity>"
+            "<InitialFilterCriteria>"
+              "<TriggerPoint>"
+                "<ConditionTypeCNF>0</ConditionTypeCNF>"
+                "<SPT>"
+                  "<ConditionNegated>0</ConditionNegated>"
+                  "<Group>0</Group>"
+                  "<Method>INVITE</Method>"
+                  "<Extension></Extension>"
+                "</SPT>"
+              "</TriggerPoint>"
+              "<ApplicationServer>"
+                "<ServerName>mmtel.narcissi.example.com</ServerName>"
+                "<DefaultHandling>0</DefaultHandling>"
+              "</ApplicationServer>"
+            "</InitialFilterCriteria>"
+          "</ServiceProfile>"
+        "</NonsenseWord>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid44/reg-data", "{\"reqtype\": \"reg\"}")] = CURLE_REMOTE_FILE_NOT_FOUND;
     fakecurl_responses["http://10.42.42.42:80/impi/privid69/registration-status?impu=pubid44"] = "{\"result-code\": 2001, \"scscf\": \"server-name\"}";
@@ -149,35 +151,150 @@ class HssConnectionTest : public BaseTest
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid50/reg-data", "{\"reqtype\": \"call\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<RegistrationState>UNREGISTERED</RegistrationState>"
-      "<IMSSubscription>"
-      "</IMSSubscription>"
+        "<RegistrationState>UNREGISTERED</RegistrationState>"
+        "<IMSSubscription>"
+        "</IMSSubscription>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid50/reg-data", "{\"reqtype\": \"dereg-admin\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<RegistrationState>NOT_REGISTERED</RegistrationState>"
-      "<IMSSubscription>"
-      "</IMSSubscription>"
+        "<RegistrationState>NOT_REGISTERED</RegistrationState>"
+        "<IMSSubscription>"
+        "</IMSSubscription>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/missingelement1/reg-data", "{\"reqtype\": \"reg\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<IMSSubscription>"
-      "</IMSSubscription>"
+        "<IMSSubscription>"
+        "</IMSSubscription>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/missingelement2/reg-data", "{\"reqtype\": \"reg\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<ClearwaterRegData>"
-      "<RegistrationState>NOT_REGISTERED</RegistrationState>"
+        "<RegistrationState>NOT_REGISTERED</RegistrationState>"
       "</ClearwaterRegData>";
     fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/missingelement3/reg-data", "{\"reqtype\": \"reg\"}")] =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<C>"
-      "<RegistrationState>NOT_REGISTERED</RegistrationState>"
-      "<IMSSubscription>"
-      "</IMSSubscription>"
+        "<RegistrationState>NOT_REGISTERED</RegistrationState>"
+        "<IMSSubscription>"
+        "</IMSSubscription>"
       "</C>";
+   fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/missingelement4/reg-data", "{\"reqtype\": \"reg\"}")] =
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+      "<ClearwaterRegData>"
+        "<RegistrationState>REGISTERED</RegistrationState>"
+        "<IMSSubscription xsi=\"http://www.w3.org/2001/XMLSchema-instance\" noNamespaceSchemaLocation=\"CxDataType.xsd\">"
+                "<PrivateID>Unspecified</PrivateID>"
+        "</IMSSubscription>"
+      "</ClearwaterRegData>";
+    fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/missingelement5/reg-data", "{\"reqtype\": \"reg\"}")] =
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+      "<ClearwaterRegData>"
+        "<RegistrationState>REGISTERED</RegistrationState>"
+        "<IMSSubscription xsi=\"http://www.w3.org/2001/XMLSchema-instance\" noNamespaceSchemaLocation=\"CxDataType.xsd\">"
+          "<PrivateID>Unspecified</PrivateID>"
+          "<ServiceProfile>"
+         "</ServiceProfile>"
+        "</IMSSubscription>"
+      "</ClearwaterRegData>";
+    fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/missingelement6/reg-data", "{\"reqtype\": \"reg\"}")] =
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+      "<ClearwaterRegData>"
+        "<RegistrationState>REGISTERED</RegistrationState>"
+        "<IMSSubscription xsi=\"http://www.w3.org/2001/XMLSchema-instance\" noNamespaceSchemaLocation=\"CxDataType.xsd\">"
+          "<PrivateID>Unspecified</PrivateID>"
+          "<ServiceProfile>"
+            "<PublicIdentity>"
+            "</PublicIdentity>"
+         "</ServiceProfile>"
+        "</IMSSubscription>"
+      "</ClearwaterRegData>";
+    fakecurl_responses_with_body[std::make_pair("http://10.42.42.42:80/impu/pubid46/reg-data", "{\"reqtype\": \"call\"}")] =
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+      "<ClearwaterRegData>"
+        "<RegistrationState>REGISTERED</RegistrationState>"
+        "<IMSSubscription>"
+          "<ServiceProfile>"
+            "<PublicIdentity>"
+              "<Identity>sip:123@example.com</Identity>"
+            "</PublicIdentity>"
+            "<PublicIdentity>"
+              "<Identity>sip:456@example.com</Identity>"
+            "</PublicIdentity>"
+            "<InitialFilterCriteria>"
+              "<TriggerPoint>"
+                "<ConditionTypeCNF>0</ConditionTypeCNF>"
+                "<SPT>"
+                  "<ConditionNegated>0</ConditionNegated>"
+                  "<Group>0</Group>"
+                  "<Method>INVITE</Method>"
+                  "<Extension></Extension>"
+                "</SPT>"
+              "</TriggerPoint>"
+              "<ApplicationServer>"
+                "<ServerName>mmtel.narcissi.example.com</ServerName>"
+                "<DefaultHandling>0</DefaultHandling>"
+              "</ApplicationServer>"
+            "</InitialFilterCriteria>"
+          "</ServiceProfile>"
+          "<ServiceProfile>"
+            "<PublicIdentity>"
+              "<Identity>sip:321@example.com</Identity>"
+            "</PublicIdentity>"
+            "<PublicIdentity>"
+              "<Identity>pubid46</Identity>"
+            "</PublicIdentity>"
+            "<PublicIdentity>"
+              "<Identity>tel:321</Identity>"
+            "</PublicIdentity>"
+            "<InitialFilterCriteria>"
+              "<TriggerPoint>"
+                "<ConditionTypeCNF>0</ConditionTypeCNF>"
+                "<SPT>"
+                  "<ConditionNegated>0</ConditionNegated>"
+                  "<Group>0</Group>"
+                  "<Method>INVITE</Method>"
+                  "<Extension></Extension>"
+                "</SPT>"
+              "</TriggerPoint>"
+              "<ApplicationServer>"
+                "<ServerName>mmtel.narcissi.example.com</ServerName>"
+                "<DefaultHandling>0</DefaultHandling>"
+              "</ApplicationServer>"
+            "</InitialFilterCriteria>"
+          "</ServiceProfile>"
+          "<ServiceProfile>"
+            "<PublicIdentity>"
+              "<Identity>sip:89@example.com</Identity>"
+            "</PublicIdentity>"
+            "<PublicIdentity>"
+              "<Identity>sip:67@example.com</Identity>"
+            "</PublicIdentity>"
+            "<InitialFilterCriteria>"
+              "<TriggerPoint>"
+                "<ConditionTypeCNF>0</ConditionTypeCNF>"
+                "<SPT>"
+                  "<ConditionNegated>0</ConditionNegated>"
+                  "<Group>0</Group>"
+                  "<Method>INVITE</Method>"
+                  "<Extension></Extension>"
+                "</SPT>"
+              "</TriggerPoint>"
+              "<ApplicationServer>"
+                "<ServerName>mmtel.narcissi.example.com</ServerName>"
+                "<DefaultHandling>0</DefaultHandling>"
+              "</ApplicationServer>"
+            "</InitialFilterCriteria>"
+          "</ServiceProfile>"
+        "</IMSSubscription>"
+        "<ChargingAddresses>"
+          "<CCF priority=\"1\">ccf1</CCF>"
+          "<CCF priority=\"2\">ccf2</CCF>"
+          "<ECF priority=\"2\">ecf2</ECF>"
+          "<ECF priority=\"1\">ecf1</ECF>"
+        "</ChargingAddresses>"
+      "</ClearwaterRegData>";
  }
 
   virtual ~HssConnectionTest()
@@ -269,6 +386,39 @@ TEST_F(HssConnectionTest, BadXML2)
   _hss.update_registration_state("pubid43_malformed", "", HSSConnection::REG, regstate, ifcs_map, uris);
   EXPECT_TRUE(uris.empty());
   EXPECT_TRUE(log.contains("Malformed HSS XML"));
+}
+
+TEST_F(HssConnectionTest, BadXML_MissingServiceProfile)
+{
+  CapturingTestLogger log;
+  std::vector<std::string> uris;
+  std::map<std::string, Ifcs> ifcs_map;
+  std::string regstate;
+  _hss.update_registration_state("missingelement4", "", HSSConnection::REG, regstate, ifcs_map, uris, 0);
+  EXPECT_TRUE(uris.empty());
+  EXPECT_TRUE(log.contains("Malformed HSS XML"));
+}
+
+TEST_F(HssConnectionTest, BadXML_MissingPublicIdentity)
+{
+  CapturingTestLogger log;
+  std::vector<std::string> uris;
+  std::map<std::string, Ifcs> ifcs_map;
+  std::string regstate;
+  _hss.update_registration_state("missingelement5", "", HSSConnection::REG, regstate, ifcs_map, uris, 0);
+  EXPECT_TRUE(uris.empty());
+  EXPECT_TRUE(log.contains("Malformed ServiceProfile XML"));
+}
+
+TEST_F(HssConnectionTest, BadXML_MissingIdentity)
+{
+  CapturingTestLogger log;
+  std::vector<std::string> uris;
+  std::map<std::string, Ifcs> ifcs_map;
+  std::string regstate;
+  _hss.update_registration_state("missingelement6", "", HSSConnection::REG, regstate, ifcs_map, uris, 0);
+  EXPECT_TRUE(uris.empty());
+  EXPECT_TRUE(log.contains("Malformed PublicIdentity XML"));
 }
 
 TEST_F(HssConnectionTest, BadXML_MissingRegistrationState)
@@ -379,4 +529,18 @@ TEST_F(HssConnectionTest, LocationNotFound)
   ASSERT_TRUE(actual == NULL);
   ASSERT_TRUE(rc == 404);
   delete actual;
+}
+
+TEST_F(HssConnectionTest, SimpleAliases)
+{
+  std::vector<std::string> aliases;
+  std::map<std::string, Ifcs> ifcs_map;
+  std::string regstate;
+  std::vector<std::string> unused_vector;
+  std::deque<std::string> unused_deque;
+  _hss.update_registration_state("pubid46", "", HSSConnection::CALL, regstate, ifcs_map, unused_vector, aliases, unused_deque, unused_deque, 0);
+  ASSERT_EQ(3u, aliases.size());
+  EXPECT_EQ("sip:321@example.com", aliases[0]);
+  EXPECT_EQ("pubid46", aliases[1]);
+  EXPECT_EQ("tel:321", aliases[2]);
 }

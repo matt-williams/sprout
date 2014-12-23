@@ -100,7 +100,9 @@ pjsip_uri* term_served_user(pjsip_msg* msg);
 
 typedef enum {NO, YES, TLS_YES, TLS_PENDING, IP_ASSOC_YES, IP_ASSOC_PENDING, AUTH_DONE} Integrity;
 void add_integrity_protected_indication(pjsip_tx_data* tdata, PJUtils::Integrity integrity);
+void add_pvni(pjsip_tx_data* tdata, pj_str_t* network_id);
 
+void add_asserted_identity(pjsip_msg* msg, pj_pool_t* pool, const std::string& aid, const pj_str_t& display_name);
 void add_asserted_identity(pjsip_tx_data* tdata, const std::string& aid);
 
 void get_impi_and_impu(pjsip_rx_data* rdata, std::string& impi_out, std::string& impu_out);
@@ -216,6 +218,8 @@ void clone_header(const pj_str_t* hdr_name, pjsip_msg* old_msg, pjsip_msg* new_m
 
 void add_top_via(pjsip_tx_data* tdata);
 
+void remove_top_via(pjsip_tx_data* tdata);
+
 void add_reason(pjsip_tx_data* tdata, int reason_code);
 
 bool compare_pj_sockaddr(const pj_sockaddr& lhs, const pj_sockaddr& rhs);
@@ -256,6 +260,15 @@ void add_pcfa_header(pjsip_msg* msg,
                      const std::deque<std::string>& ccfs,
                      const std::deque<std::string>& ecfs,
                      const bool replace);
+
+pjsip_uri* translate_sip_uri_to_tel_uri(const pjsip_sip_uri* sip_uri,
+                                        pj_pool_t* pool);
+
+pj_bool_t is_user_global(const std::string& user);
+pj_bool_t is_user_global(const pj_str_t& user);
+
+pj_bool_t is_user_numeric(const std::string& user);
+pj_bool_t is_user_numeric(const pj_str_t& user);
 
 } // namespace PJUtils
 

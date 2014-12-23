@@ -64,14 +64,16 @@ const std::string HSSConnection::STATE_NOT_REGISTERED = "NOT_REGISTERED";
 HSSConnection::HSSConnection(const std::string& server,
                              HttpResolver* resolver,
                              LoadMonitor *load_monitor,
-                             LastValueCache *stats_aggregator) :
+                             LastValueCache *stats_aggregator,
+                             CommunicationMonitor* comm_monitor) :
   _http(new HttpConnection(server,
                            false,
                            resolver,
                            "connected_homesteads",
                            load_monitor,
                            stats_aggregator,
-                           SASEvent::HttpLogLevel::PROTOCOL)),
+                           SASEvent::HttpLogLevel::PROTOCOL,
+                           comm_monitor)),
   _latency_stat("hss_latency_us", stats_aggregator),
   _digest_latency_stat("hss_digest_latency_us", stats_aggregator),
   _subscription_latency_stat("hss_subscription_latency_us", stats_aggregator),
@@ -86,7 +88,6 @@ HSSConnection::~HSSConnection()
   delete _http;
   _http = NULL;
 }
-
 
 /// Get an Authentication Vector as JSON object. Caller is responsible for deleting.
 HTTPCode HSSConnection::get_auth_vector(const std::string& private_user_identity,
@@ -164,7 +165,7 @@ HTTPCode HSSConnection::get_json_object(const std::string& path,
     if (!parsingSuccessful)
     {
       // report to the user the failure and their locations in the document.
-      LOG_ERROR("Failed to parse Homestead response:\n %s\n %s\n %s\n", path.c_str(), json_data.c_str(), reader.getFormatedErrorMessages().c_str());
+      LOG_WARNING("Failed to parse Homestead response:\n %s\n %s\n %s\n", path.c_str(), json_data.c_str(), reader.getFormatedErrorMessages().c_str());
       delete json_object;
       json_object = NULL;
     }
@@ -187,7 +188,7 @@ rapidxml::xml_document<>* HSSConnection::parse_xml(std::string raw_data, const s
   catch (rapidxml::parse_error& err)
   {
     // report to the user the failure and their locations in the document.
-    LOG_ERROR("Failed to parse Homestead response:\n %s\n %s\n %s\n", url.c_str(), raw_data.c_str(), err.what());
+    LOG_WARNING("Failed to parse Homestead response:\n %s\n %s\n %s\n", url.c_str(), raw_data.c_str(), err.what());
     delete root;
     root = NULL;
   }
@@ -248,20 +249,20 @@ bool compare_charging_addrs(const rapidxml::xml_node<>* ca1,
 }
 
 
-bool decode_homestead_xml(std::shared_ptr<rapidxml::xml_document<> > root,
+bool decode_homestead_xml(const std::string public_user_identity,
+                          std::shared_ptr<rapidxml::xml_document<> > root,
                           std::string& regstate,
                           std::map<std::string, Ifcs >& ifcs_map,
                           std::vector<std::string>& associated_uris,
+                          std::vector<std::string>& aliases,
                           std::deque<std::string>& ccfs,
                           std::deque<std::string>& ecfs,
                           bool allowNoIMS)
 {
-  rapidxml::xml_node<>* sp = NULL;
-
   if (!root.get())
   {
     // If get_xml_object has not returned a document, there must have been a parsing error.
-    LOG_ERROR("Malformed HSS XML - document couldn't be parsed");
+    LOG_WARNING("Malformed HSS XML - document couldn't be parsed");
     return false;
   }
 
@@ -269,7 +270,7 @@ bool decode_homestead_xml(std::shared_ptr<rapidxml::xml_document<> > root,
 
   if (!cw)
   {
-    LOG_ERROR("Malformed Homestead XML - no ClearwaterRegData element");
+    LOG_WARNING("Malformed Homestead XML - no ClearwaterRegData element");
     return false;
   }
 
@@ -277,7 +278,7 @@ bool decode_homestead_xml(std::shared_ptr<rapidxml::xml_document<> > root,
 
   if (!reg)
   {
-    LOG_ERROR("Malformed Homestead XML - no RegistrationState element");
+    LOG_WARNING("Malformed Homestead XML - no RegistrationState element");
     return false;
   }
 
@@ -293,25 +294,88 @@ bool decode_homestead_xml(std::shared_ptr<rapidxml::xml_document<> > root,
 
   if (!imss)
   {
-    LOG_ERROR("Malformed HSS XML - no IMSSubscription element");
+    LOG_WARNING("Malformed HSS XML - no IMSSubscription element");
     return false;
   }
 
-  for (sp = imss->first_node("ServiceProfile"); sp != NULL; sp = sp->next_sibling("ServiceProfile"))
+  // The set of aliases consists of the set of public identities in the same
+  // Service Profile. It is a subset of the associated URIs. In order to find
+  // the set of aliases we want, we need to find the Service Profile containing
+  // our public identity and then save off all of the public identities in this
+  // Service Profile.
+  //
+  // sp_identities is used to save the public identities in the current Service
+  // Profile.
+  // current_sp_contains_public_id is a flag used to indicate that the Service
+  // Profile we're currently cycling through contains our public identity.
+  // found_aliases is a flag used to indicate that we've already found our list
+  // of aliases.
+  std::vector<std::string> sp_identities;
+  bool current_sp_contains_public_id = false;
+  bool found_aliases = false;
+  rapidxml::xml_node<>* sp = NULL;
+
+  if (!imss->first_node("ServiceProfile"))
+  {
+    LOG_WARNING("Malformed HSS XML - no ServiceProfiles");
+    return false;
+  }
+
+  for (sp = imss->first_node("ServiceProfile");
+       sp != NULL;
+       sp = sp->next_sibling("ServiceProfile"))
   {
     Ifcs ifc(root, sp);
     rapidxml::xml_node<>* public_id = NULL;
 
-    for (public_id = sp->first_node("PublicIdentity"); public_id != NULL; public_id = public_id->next_sibling("PublicIdentity"))
+    if (!sp->first_node("PublicIdentity"))
+    {
+      LOG_WARNING("Malformed ServiceProfile XML - no Public Identity");
+      return false;
+    }
+
+    for (public_id = sp->first_node("PublicIdentity");
+         public_id != NULL;
+         public_id = public_id->next_sibling("PublicIdentity"))
     {
       rapidxml::xml_node<>* identity = public_id->first_node("Identity");
+
       if (identity)
       {
         std::string uri = std::string(identity->value());
-        LOG_DEBUG("Processing Identity node from HSS XML - %s\n", uri.c_str());
+        LOG_DEBUG("Processing Identity node from HSS XML - %s\n",
+                  uri.c_str());
 
         associated_uris.push_back(uri);
         ifcs_map[uri] = ifc;
+
+        if (!found_aliases)
+        {
+          sp_identities.push_back(uri);
+
+          if (uri == public_user_identity)
+          {
+            current_sp_contains_public_id = true;
+          }
+        }
+      }
+      else
+      {
+        LOG_WARNING("Malformed PublicIdentity XML - no Identity");
+        return false;
+      }
+    }
+
+    if (!found_aliases)
+    {
+      if (current_sp_contains_public_id)
+      {
+        aliases = sp_identities;
+        found_aliases = true;
+      }
+      else
+      {
+        sp_identities.clear();
       }
     }
   }
@@ -383,6 +447,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                                   std::map<std::string, Ifcs >& ifcs_map,
                                                   std::vector<std::string>& associated_uris)
 {
+  std::vector<std::string> unused_aliases;
   std::deque<std::string> unused_ccfs;
   std::deque<std::string> unused_ecfs;
   return update_registration_state(public_user_identity,
@@ -391,6 +456,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                    regstate,
                                    ifcs_map,
                                    associated_uris,
+                                   unused_aliases,
                                    unused_ccfs,
                                    unused_ecfs);
 }
@@ -402,6 +468,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                                   std::vector<std::string>& associated_uris)
 {
   std::string unused;
+  std::vector<std::string> unused_aliases;
   std::deque<std::string> unused_ccfs;
   std::deque<std::string> unused_ecfs;
   return update_registration_state(public_user_identity,
@@ -410,6 +477,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                    unused,
                                    ifcs_map,
                                    associated_uris,
+                                   unused_aliases,
                                    unused_ccfs,
                                    unused_ecfs);
 }
@@ -421,6 +489,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
   std::map<std::string, Ifcs > ifcs_map;
   std::vector<std::string> associated_uris;
   std::string unused;
+  std::vector<std::string> unused_aliases;
   std::deque<std::string> unused_ccfs;
   std::deque<std::string> unused_ecfs;
   return update_registration_state(public_user_identity,
@@ -429,10 +498,10 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                    unused,
                                    ifcs_map,
                                    associated_uris,
+                                   unused_aliases,
                                    unused_ccfs,
                                    unused_ecfs);
 }
-
 
 HTTPCode HSSConnection::update_registration_state(const std::string& public_user_identity,
                                                   const std::string& private_user_identity,
@@ -440,6 +509,30 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                                   std::string& regstate,
                                                   std::map<std::string, Ifcs >& ifcs_map,
                                                   std::vector<std::string>& associated_uris,
+                                                  std::deque<std::string>& ccfs,
+                                                  std::deque<std::string>& ecfs,
+                                                  SAS::TrailId trail)
+{
+  std::vector<std::string> unused_aliases;
+  return update_registration_state(public_user_identity,
+                                   private_user_identity,
+                                   type,
+                                   regstate,
+                                   ifcs_map,
+                                   associated_uris,
+                                   unused_aliases,
+                                   ccfs,
+                                   ecfs,
+                                   trail);
+}
+
+HTTPCode HSSConnection::update_registration_state(const std::string& public_user_identity,
+                                                  const std::string& private_user_identity,
+                                                  const std::string& type,
+                                                  std::string& regstate,
+                                                  std::map<std::string, Ifcs >& ifcs_map,
+                                                  std::vector<std::string>& associated_uris,
+                                                  std::vector<std::string>& aliases,
                                                   std::deque<std::string>& ccfs,
                                                   std::deque<std::string>& ecfs)
 {
@@ -489,7 +582,15 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
     return http_code;
   }
 
-  return decode_homestead_xml(root, regstate, ifcs_map, associated_uris, ccfs, ecfs, false) ? HTTP_OK : HTTP_SERVER_ERROR;
+  return decode_homestead_xml(public_user_identity,
+                              root,
+                              regstate,
+                              ifcs_map,
+                              associated_uris,
+                              aliases,
+                              ccfs,
+                              ecfs,
+                              false) ? HTTP_OK : HTTP_SERVER_ERROR;
 }
 
 HTTPCode HSSConnection::get_registration_data(const std::string& public_user_identity,
@@ -556,7 +657,16 @@ HTTPCode HSSConnection::get_registration_data(const std::string& public_user_ide
   // Return whether the XML was successfully decoded. The XML can be decoded and
   // not return any IFCs (when the subscriber isn't registered), so a successful
   // response shouldn't be taken as a guarantee of IFCs.
-  return decode_homestead_xml(root, regstate, ifcs_map, associated_uris, ccfs, ecfs, true) ? HTTP_OK : HTTP_SERVER_ERROR;
+  std::vector<std::string> unused_aliases;
+  return decode_homestead_xml(public_user_identity,
+                              root,
+                              regstate,
+                              ifcs_map,
+                              associated_uris,
+                              unused_aliases,
+                              ccfs,
+                              ecfs,
+                              true) ? HTTP_OK : HTTP_SERVER_ERROR;
 }
 
 

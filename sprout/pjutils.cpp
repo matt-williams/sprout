@@ -46,6 +46,8 @@ extern "C" {
 #include <pjlib.h>
 }
 
+#include "sprout_pd_definitions.h"
+
 #include "stack.h"
 #include "log.h"
 #include "constants.h"
@@ -379,6 +381,13 @@ pjsip_uri* PJUtils::term_served_user(pjsip_msg* msg)
   return msg->line.req.uri;
 }
 
+void PJUtils::add_pvni(pjsip_tx_data* tdata, pj_str_t* network_id)
+{
+  pjsip_generic_string_hdr* pvni_hdr = pjsip_generic_string_hdr_create(tdata->pool,
+                                                                       &STR_P_V_N_I,
+                                                                       network_id);
+  pjsip_msg_add_hdr(tdata->msg, (pjsip_hdr*)pvni_hdr);
+}
 
 void PJUtils::add_integrity_protected_indication(pjsip_tx_data* tdata, Integrity integrity)
 {
@@ -461,16 +470,31 @@ void PJUtils::get_impi_and_impu(pjsip_rx_data* rdata, std::string& impi_out, std
 }
 
 /// Adds a P-Asserted-Identity header to the message.
-void PJUtils::add_asserted_identity(pjsip_tx_data* tdata, const std::string& aid)
+void PJUtils::add_asserted_identity(pjsip_msg* msg,
+                                    pj_pool_t* pool,
+                                    const std::string& aid,
+                                    const pj_str_t& display_name)
 {
   LOG_DEBUG("Adding P-Asserted-Identity header: %s", aid.c_str());
   pjsip_routing_hdr* p_asserted_id =
-                     identity_hdr_create(tdata->pool, STR_P_ASSERTED_IDENTITY);
+                     identity_hdr_create(pool, STR_P_ASSERTED_IDENTITY);
 
-  pjsip_name_addr* temp = (pjsip_name_addr*)uri_from_string(aid, tdata->pool, true);
+  pjsip_name_addr* temp = (pjsip_name_addr*)uri_from_string(aid, pool, true);
+  if (display_name.slen > 0)
+  {
+    temp->display = display_name;
+  }
   memcpy(&p_asserted_id->name_addr, temp, sizeof(pjsip_name_addr));
 
-  pjsip_msg_add_hdr(tdata->msg, (pjsip_hdr*)p_asserted_id);
+  pjsip_msg_add_hdr(msg, (pjsip_hdr*)p_asserted_id);
+}
+
+void PJUtils::add_asserted_identity(pjsip_tx_data* tdata,
+                                    const std::string& aid)
+{
+  pj_str_t display_name;
+  display_name.slen = 0;
+  add_asserted_identity(tdata->msg, tdata->pool, aid, display_name);
 }
 
 
@@ -1159,55 +1183,64 @@ pj_status_t PJUtils::send_request(pjsip_tx_data* tdata,
   {
     // We have servers to send the request to, so allocate a transaction.
     status = pjsip_tsx_create_uac(&mod_sprout_util, tdata, &tsx);
-
-    if (status == PJ_SUCCESS)
-    {
-      // Set the trail ID in the transaction from the message.
-      set_trail(tsx, get_trail(tdata));
-      if (log_sas_branch)
-      {
-        PJUtils::mark_sas_call_branch_ids(get_trail(tdata), NULL, tdata->msg);
-      }
-      // Set up the module data for the new transaction to reference
-      // the state information.
-      tsx->mod_data[mod_sprout_util.id] = sss;
-
-      if (tdata->tp_sel.type == PJSIP_TPSELECTOR_TRANSPORT)
-      {
-        // Transport has already been determined, so copy it across to the
-        // transaction.
-        LOG_DEBUG("Transport already determined");
-        pjsip_tsx_set_transport(tsx, &tdata->tp_sel);
-      }
-
-      // Store the message and add a reference to prevent the transaction layer
-      // freeing it.
-      sss->tdata = tdata;
-      pjsip_tx_data_add_ref(tdata);
-
-      LOG_DEBUG("Sending request");
-      status = pjsip_tsx_send_msg(tsx, tdata);
-    }
   }
 
-  if (status != PJ_SUCCESS)
+  if (status == PJ_SUCCESS)
   {
-    // The assumption here is that, if pjsip_tsx_send_msg returns an error
-    // the on_tsx_state callback will not get called, so it is safe to free
-    // off the state data and request here.  Also, this is an unexpected
-    // error rather than an indication that the destination server is down,
-    // so we don't blacklist.
+    // Set the trail ID in the transaction from the message.
+    set_trail(tsx, get_trail(tdata));
+    if (log_sas_branch)
+    {
+      PJUtils::mark_sas_call_branch_ids(get_trail(tdata), NULL, tdata->msg);
+    }
+
+    // Set up the module data for the new transaction to reference
+    // the state information.
+    tsx->mod_data[mod_sprout_util.id] = sss;
+
+    if (tdata->tp_sel.type == PJSIP_TPSELECTOR_TRANSPORT)
+    {
+      // Transport has already been determined, so copy it across to the
+      // transaction.
+      LOG_DEBUG("Transport already determined");
+      pjsip_tsx_set_transport(tsx, &tdata->tp_sel);
+    }
+
+    // Store the message and add a reference to prevent the transaction layer
+    // freeing it.
+    sss->tdata = tdata;
+    pjsip_tx_data_add_ref(tdata);
+
+    LOG_DEBUG("Sending request");
+    status = pjsip_tsx_send_msg(tsx, tdata);
+
+    if (status != PJ_SUCCESS)
+    {
+      // If pjsip_tsx_send_msg fails when the UAC transaction is in NULL
+      // state it will always call the on_tsx_state callback terminating
+      // the transaction, so no clean-up left to do, and must return
+      // PJ_SUCCESS to caller to avoid potential double-free errors.  It's
+      // also not safe to access the request here, and logging of the error
+      // will have happened in the callback.
+      status = PJ_SUCCESS;
+    }
+  }
+  else
+  {
+    // Failed to resolve the destination or failed to create a PJSIP UAC
+    // transaction.
+    CL_SPROUT_SIP_SEND_REQUEST_ERR.log(PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR,
+                                       PJUtils::next_hop(tdata->msg)).c_str(),
+                                       PJUtils::pj_status_to_string(status).c_str());
+
     LOG_ERROR("Failed to send request to %s",
               PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR,
                                      PJUtils::next_hop(tdata->msg)).c_str());
 
-    // Only free the state data if there are no more references to it
-    pj_status_t dec_status = pjsip_tx_data_dec_ref(tdata);
-
-    if (dec_status == PJSIP_EBUFDESTROYED)
-    {
-      delete sss;
-    }
+    // Since the on_tsx_state callback will not have been called we must
+    // clean up resources here.
+    pjsip_tx_data_dec_ref(tdata);
+    delete sss;
   }
 
   return status;
@@ -1327,6 +1360,9 @@ pj_status_t PJUtils::send_request_stateless(pjsip_tx_data* tdata, int retries)
     // and the request here.  Also, this would be an unexpected error rather
     // than an indication that the selected destination server is down, so we
     // don't blacklist.
+    CL_SPROUT_SIP_SEND_REQUEST_ERR.log(PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR,
+                                       PJUtils::next_hop(tdata->msg)).c_str(),
+                                       PJUtils::pj_status_to_string(status).c_str());
     LOG_ERROR("Failed to send request to %s",
               PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR,
                                      PJUtils::next_hop(tdata->msg)).c_str());
@@ -1501,6 +1537,16 @@ void PJUtils::add_top_via(pjsip_tx_data* tdata)
   generate_new_branch_id(tdata);
 }
 
+void PJUtils::remove_top_via(pjsip_tx_data* tdata)
+{
+  // Removes the top Via header.
+  pjsip_via_hdr *hvia = (pjsip_via_hdr*)pjsip_msg_find_hdr(tdata->msg, PJSIP_H_VIA, NULL);
+  if (hvia != NULL)
+  {
+    pj_list_erase(hvia);
+  }
+}
+
 void PJUtils::add_reason(pjsip_tx_data* tdata, int reason_code)
 {
   char reason_val_str[100];
@@ -1609,8 +1655,9 @@ bool PJUtils::is_emergency_registration(pjsip_contact_hdr* contact_hdr)
 bool PJUtils::is_uri_phone_number(pjsip_uri* uri)
 {
   return ((uri != NULL) &&
-          ((PJSIP_URI_SCHEME_IS_TEL(uri) ||
-           (PJSIP_URI_SCHEME_IS_SIP(uri) && (pj_strcmp2(&((pjsip_sip_uri*)uri)->user_param, "phone") == 0)))));
+          ((PJSIP_URI_SCHEME_IS_TEL(uri)) ||
+           ((PJSIP_URI_SCHEME_IS_SIP(uri)) &&
+            (!pj_strcmp(&((pjsip_sip_uri*)uri)->user_param, &STR_USER_PHONE)))));
 }
 
 bool PJUtils::is_uri_gruu(pjsip_uri* uri)
@@ -1977,4 +2024,90 @@ void PJUtils::add_pcfa_header(pjsip_msg* msg,
     }
     pjsip_msg_add_hdr(msg, (pjsip_hdr*)pcfa_hdr);
   }
+}
+
+/// Takes a SIP URI and turns it into its equivalent tel URI. This is used
+/// for SIP URIs that actually represent phone numbers, i.e. SIP URIs that
+/// contain the user=phone parameter.
+///
+/// @returns                      A pointer to the new tel URI object.
+/// @param sip_uri                The SIP URI to convert.
+/// @param pool                   A pool.
+pjsip_uri* PJUtils::translate_sip_uri_to_tel_uri(const pjsip_sip_uri* sip_uri,
+                                                 pj_pool_t* pool)
+{
+  pjsip_tel_uri* tel_uri = pjsip_tel_uri_create(pool);
+
+  tel_uri->number = sip_uri->user;
+  tel_uri->context.slen = 0;
+  tel_uri->isub_param.slen = 0;
+  tel_uri->ext_param.slen = 0;
+  tel_uri->other_param.next = NULL;
+
+  pjsip_param* isub = pjsip_param_find(&sip_uri->other_param, &STR_ISUB);
+  if (isub != NULL)
+  {
+    tel_uri->isub_param.slen = isub->value.slen;
+    tel_uri->isub_param.ptr = isub->value.ptr;
+  }
+
+  pjsip_param* ext = pjsip_param_find(&sip_uri->other_param, &STR_EXT);
+  if (ext != NULL)
+  {
+    tel_uri->ext_param.slen = ext->value.slen;
+    tel_uri->ext_param.ptr = ext->value.ptr;
+  }
+
+  return (pjsip_uri*)tel_uri;
+}
+
+/// Determines whether a user string represents a global number.
+///
+/// @returns                      PJ_TRUE if the user is global, PJ_FALSE if
+///                               not.
+/// @param user                   The user to test.
+pj_bool_t PJUtils::is_user_global(const std::string& user)
+{
+  pj_bool_t rc = PJ_FALSE;
+
+  if ((!user.empty()) && (user[0] == '+'))
+  {
+    LOG_DEBUG("Global user %s", user.c_str());
+    rc = PJ_TRUE;
+  }
+
+  return rc;
+}
+
+
+pj_bool_t PJUtils::is_user_global(const pj_str_t& user)
+{
+  return is_user_global(pj_str_to_string(&user));
+}
+
+
+/// Determines whether a user string is purely numeric (maybe with a leading +).
+///
+/// @returns                      PJ_TRUE if the user is numeric, PJ_FALSE if
+///                               not.
+/// @param user                   The user to test.
+pj_bool_t PJUtils::is_user_numeric(const std::string& user)
+{
+  pj_bool_t rc = PJ_TRUE;
+
+  for (size_t i = 0; i < user.size(); i++)
+  {
+    if ((!isdigit(user[i])) &&
+        ((user[i] != '+') || (i != 0)))
+    {
+      rc = PJ_FALSE;
+    }
+  }
+  return rc;
+}
+
+
+pj_bool_t PJUtils::is_user_numeric(const pj_str_t& user)
+{
+  return is_user_numeric(pj_str_to_string(&user));
 }

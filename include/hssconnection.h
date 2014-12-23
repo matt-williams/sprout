@@ -61,7 +61,8 @@ public:
   HSSConnection(const std::string& server,
                 HttpResolver* resolver,
                 LoadMonitor *load_monitor,
-                LastValueCache *stats_aggregator);
+                LastValueCache *stats_aggregator,
+                CommunicationMonitor* comm_monitor);
   ~HSSConnection();
 
   HTTPCode get_auth_vector(const std::string& private_user_id,
@@ -79,6 +80,16 @@ public:
                              const std::string& auth_type,
                              Json::Value*& object);
 
+  HTTPCode update_registration_state(const std::string& public_user_identity,
+                                     const std::string& private_user_identity,
+                                     const std::string& type,
+                                     std::string& regstate,
+                                     std::map<std::string, Ifcs >& service_profiles,
+                                     std::vector<std::string>& associated_uris,
+                                     std::vector<std::string>& aliases,
+                                     std::deque<std::string>& ccfs,
+                                     std::deque<std::string>& ecfs,
+                                     SAS::TrailId trail);
   HTTPCode update_registration_state(const std::string& public_user_identity,
                                      const std::string& private_user_identity,
                                      const std::string& type,

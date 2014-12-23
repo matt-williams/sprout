@@ -45,6 +45,7 @@ extern "C" {
 #include <pjlib.h>
 #include "pjsip-simple/evsub.h"
 }
+
 #include <arpa/inet.h>
 
 // Common STL includes.
@@ -74,6 +75,7 @@ extern "C" {
 #include "quiescing_manager.h"
 #include "load_monitor.h"
 #include "counter.h"
+#include "sprout_pd_definitions.h"
 
 class StackQuiesceHandler;
 
@@ -145,10 +147,18 @@ const static std::string _known_statnames[] = {
   "hss_user_auth_latency_us",
   "hss_location_latency_us",
   "connected_ralfs",
+  "cdiv_total",
+  "cdiv_unconditional",
+  "cdiv_busy",
+  "cdiv_not_registered",
+  "cdiv_no_answer",
+  "cdiv_not_reachable",
+  "memento_completed_calls",
+  "memento_failed_calls",
+  "memento_not_recorded_overload",
+  "memento_cassandra_read_latency",
+  "memento_cassandra_write_latency",
 };
-
-const static std::string SPROUT_ZMQ_PORT = "6666";
-const static std::string BONO_ZMQ_PORT = "6669";
 
 const std::string* known_statnames = _known_statnames;
 const int num_known_stats = sizeof(_known_statnames) / sizeof(std::string);
@@ -321,7 +331,7 @@ static void sas_log_rx_msg(pjsip_rx_data* rdata)
   event.add_static_param(pjsip_transport_get_type_from_flag(rdata->tp_info.transport->flag));
   event.add_static_param(rdata->pkt_info.src_port);
   event.add_var_param(rdata->pkt_info.src_name);
-  event.add_var_param(rdata->msg_info.len, rdata->msg_info.msg_buf);
+  event.add_compressed_param(rdata->msg_info.len, rdata->msg_info.msg_buf, &SASEvent::PROFILE_SIP);
   SAS::report_event(event);
 }
 
@@ -338,7 +348,9 @@ static void sas_log_tx_msg(pjsip_tx_data *tdata)
     event.add_static_param(pjsip_transport_get_type_from_flag(tdata->tp_info.transport->flag));
     event.add_static_param(tdata->tp_info.dst_port);
     event.add_var_param(tdata->tp_info.dst_name);
-    event.add_var_param((int)(tdata->buf.cur - tdata->buf.start), tdata->buf.start);
+    event.add_compressed_param((int)(tdata->buf.cur - tdata->buf.start),
+                               tdata->buf.start,
+                               &SASEvent::PROFILE_SIP);
     SAS::report_event(event);
   }
   else
@@ -422,6 +434,7 @@ static pj_bool_t on_rx_msg(pjsip_rx_data* rdata)
     // The queue has not been serviced for sufficiently long to imply that
     // all the worker threads are deadlock, so exit the process so it will be
     // restarted.
+    CL_SPROUT_SIP_DEADLOCK.log();
     LOG_ERROR("Detected worker thread deadlock - exiting");
     abort();
   }
@@ -592,6 +605,7 @@ pj_status_t create_udp_transport(int port, pj_str_t& host)
 
   if (status != PJ_SUCCESS)
   {
+    CL_SPROUT_SIP_UDP_INTERFACE_START_FAIL.log(port, PJUtils::pj_status_to_string(status).c_str());
     LOG_ERROR("Failed to start UDP transport for port %d (%s)", port, PJUtils::pj_status_to_string(status).c_str());
   }
 
@@ -628,7 +642,9 @@ pj_status_t create_tcp_listener_transport(int port, pj_str_t& host, pjsip_tpfact
   else
   {
     status = PJ_EAFNOTSUP;
-    LOG_ERROR("Failed to start TCP transport for port %d (%s)",
+    CL_SPROUT_SIP_TCP_START_FAIL.log(port,
+                                     PJUtils::pj_status_to_string(status).c_str());
+    LOG_ERROR("Failed to start TCP transport for port %d  (%s)",
               port,
               PJUtils::pj_status_to_string(status).c_str());
     return status;
@@ -642,6 +658,8 @@ pj_status_t create_tcp_listener_transport(int port, pj_str_t& host, pjsip_tpfact
 
   if (status != PJ_SUCCESS)
   {
+    CL_SPROUT_SIP_TCP_SERVICE_START_FAIL.log(port,
+                                             PJUtils::pj_status_to_string(status).c_str());
     LOG_ERROR("Failed to start TCP transport for port %d (%s)",
               port,
               PJUtils::pj_status_to_string(status).c_str());
@@ -716,11 +734,13 @@ public:
     {
       destroy_tcp_listener_transport(stack_data.scscf_port,
                                      stack_data.scscf_tcp_factory);
+      CL_SPROUT_S_CSCF_END.log(stack_data.scscf_port);
     }
     if (stack_data.icscf_tcp_factory != NULL)
     {
       destroy_tcp_listener_transport(stack_data.icscf_port,
                                      stack_data.icscf_tcp_factory);
+      CL_SPROUT_I_CSCF_END.log(stack_data.icscf_port);
     }
   }
 
@@ -995,6 +1015,14 @@ pj_status_t init_stack(const std::string& system_name,
     status = start_transports(stack_data.scscf_port,
                               stack_data.public_host,
                               &stack_data.scscf_tcp_factory);
+    if (status == PJ_SUCCESS)
+    {
+      CL_SPROUT_S_CSCF_AVAIL.log(stack_data.scscf_port);
+    }
+    else
+    {
+      CL_SPROUT_S_CSCF_INIT_FAIL2.log(stack_data.scscf_port);
+    }
     PJ_ASSERT_RETURN(status == PJ_SUCCESS, status);
   }
 
@@ -1004,6 +1032,14 @@ pj_status_t init_stack(const std::string& system_name,
     status = start_transports(stack_data.icscf_port,
                               stack_data.public_host,
                               &stack_data.icscf_tcp_factory);
+    if (status == PJ_SUCCESS)
+    {
+      CL_SPROUT_I_CSCF_AVAIL.log(stack_data.icscf_port);
+    }
+    else
+    {
+      CL_SPROUT_I_CSCF_INIT_FAIL2.log(stack_data.icscf_port);
+    }
     PJ_ASSERT_RETURN(status == PJ_SUCCESS, status);
   }
 
@@ -1087,17 +1123,20 @@ pj_status_t init_stack(const std::string& system_name,
   }
 
   // Set up the Last Value Cache, accumulators and counters.
-  std::string zmq_port = SPROUT_ZMQ_PORT;
-
+  std::string process_name;
   if ((stack_data.pcscf_trusted_port != 0) &&
       (stack_data.pcscf_untrusted_port != 0))
   {
-    zmq_port = BONO_ZMQ_PORT;
+    process_name = "bono";
+  }
+  else
+  {
+    process_name = "sprout";
   }
 
   stack_data.stats_aggregator = new LastValueCache(num_known_stats,
                                                    known_statnames,
-                                                   zmq_port);
+                                                   process_name);
 
   latency_accumulator = new StatisticAccumulator("latency_us",
                                                  stack_data.stats_aggregator);
