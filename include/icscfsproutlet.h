@@ -100,11 +100,10 @@ private:
   }
 
   /// Attempts to use ENUM to translate the specified Tel URI into a SIP URI.
-  std::string enum_translate_tel_uri(pjsip_tel_uri* uri, SAS::TrailId trail);
+  std::string enum_translate_tel_uri(pjsip_tel_uri* uri);
 
   /// Get an ACR instance from the factory.
-  /// @param trail                SAS trail identifier to use for the ACR.
-  ACR* get_acr(SAS::TrailId trail);
+  ACR* get_acr();
 
   friend class ICSCFSproutletTsx;
   friend class ICSCFSproutletRegTsx;

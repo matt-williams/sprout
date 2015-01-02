@@ -387,8 +387,7 @@ void process_subscription_request(pjsip_rx_data* rdata)
 
   // Create an ACR for the request.  The node role is always considered
   // originating for SUBSCRIBE requests.
-  ACR* acr = acr_factory->get_acr(get_trail(rdata),
-                                  CALLING_PARTY,
+  ACR* acr = acr_factory->get_acr(CALLING_PARTY,
                                   NODE_ROLE_ORIGINATING);
   acr->rx_request(rdata->msg_info.msg, rdata->pkt_info.timestamp);
 
@@ -410,8 +409,8 @@ void process_subscription_request(pjsip_rx_data* rdata)
   SAS::Marker start_marker(trail, MARKER_ID_START, 1u);
   SAS::report_marker(start_marker);
 
-  PJUtils::report_sas_to_from_markers(trail, rdata->msg_info.msg);
-  PJUtils::mark_sas_call_branch_ids(trail, NULL, rdata->msg_info.msg);
+  PJUtils::report_sas_to_from_markers(rdata->msg_info.msg);
+  PJUtils::mark_sas_call_branch_ids(NULL, rdata->msg_info.msg);
 
   // Query the HSS for the associated URIs.
   std::vector<std::string> uris;

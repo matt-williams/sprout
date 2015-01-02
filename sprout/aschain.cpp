@@ -43,6 +43,7 @@
 #include "stateful_proxy.h"
 #include "aschain.h"
 #include "ifchandler.h"
+#include "sascontext.h"
 
 const int AsChainLink::AS_TIMEOUT_CONTINUE;
 const int AsChainLink::AS_TIMEOUT_TERMINATE;
@@ -57,7 +58,6 @@ AsChain::AsChain(AsChainTable* as_chain_table,
                  const SessionCase& session_case,
                  const std::string& served_user,
                  bool is_registered,
-                 SAS::TrailId trail,
                  Ifcs& ifcs,
                  ACR* acr) :
   _as_chain_table(as_chain_table),
@@ -68,7 +68,6 @@ AsChain::AsChain(AsChainTable* as_chain_table,
   _session_case(session_case),
   _served_user(served_user),
   _is_registered(is_registered),
-  _trail(trail),
   _ifcs(ifcs),
   _acr(acr)
 {
@@ -160,11 +159,6 @@ bool AsChain::matches_target(pjsip_tx_data* tdata) const
   return (orig_uri == msg_uri);
 }
 
-SAS::TrailId AsChain::trail() const
-{
-  return _trail;
-}
-
 /// Create a new AsChain and return a link pointing at the start of
 // it. Caller MUST eventually call release() when it is finished with the
 // AsChainLink.
@@ -174,7 +168,6 @@ AsChainLink AsChainLink::create_as_chain(AsChainTable* as_chain_table,
                                          const SessionCase& session_case,
                                          const std::string& served_user,
                                          bool is_registered,
-                                         SAS::TrailId trail,
                                          Ifcs& ifcs,
                                          ACR* acr)
 {
@@ -182,7 +175,6 @@ AsChainLink AsChainLink::create_as_chain(AsChainTable* as_chain_table,
                                   session_case,
                                   served_user,
                                   is_registered,
-                                  trail,
                                   ifcs,
                                   acr);
   return AsChainLink(as_chain, 0u);
@@ -206,8 +198,7 @@ void AsChainLink::on_initial_request(pjsip_msg* msg,
     if (ifc.filter_matches(_as_chain->session_case(),
                             _as_chain->_is_registered,
                             false,
-                            msg,
-                            trail()))
+                            msg))
     {
       LOG_DEBUG("Matched iFC %s", to_string().c_str());
       AsInvocation application_server = ifc.as_invocation();

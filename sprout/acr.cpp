@@ -40,6 +40,7 @@
 #include "constants.h"
 #include "custom_headers.h"
 #include "acr.h"
+#include "sascontext.h"
 
 const pj_time_val ACR::unspec = {-1,0};
 
@@ -137,18 +138,16 @@ ACRFactory::~ACRFactory()
 {
 }
 
-ACR* ACRFactory::get_acr(SAS::TrailId trail, Initiator initiator, NodeRole role)
+ACR* ACRFactory::get_acr(Initiator initiator, NodeRole role)
 {
   return new ACR();
 }
 
 RalfACR::RalfACR(HttpConnection* ralf,
-                 SAS::TrailId trail,
                  Node node_functionality,
                  Initiator initiator,
                  NodeRole role) :
   _ralf(ralf),
-  _trail(trail),
   _initiator(initiator),
   _first_req(true),
   _first_rsp(true),
@@ -1696,14 +1695,16 @@ RalfACRFactory::~RalfACRFactory()
 }
 
 /// Get an RalfACR instance from the factory.
-ACR* RalfACRFactory::get_acr(SAS::TrailId trail,
-                             Initiator initiator,
+ACR* RalfACRFactory::get_acr(Initiator initiator,
                              NodeRole role)
 {
   LOG_DEBUG("Create RalfACR for node type %s with role %s",
             ACR::node_name(_node_functionality).c_str(),
             ACR::node_role_str(role).c_str());
 
-  return (ACR*)new RalfACR(_ralf, trail, _node_functionality, initiator, role);
+  return (ACR*)new RalfACR(_ralf,
+                           _node_functionality,
+                           initiator,
+                           role);
 }
 

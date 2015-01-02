@@ -44,6 +44,7 @@
 #include "pjmedia.h"
 #include "mmtelsasevent.h"
 #include "mmtel.h"
+#include "sascontext.h"
 #include "constants.h"
 
 using namespace rapidxml;
@@ -74,7 +75,7 @@ AppServerTsx* Mmtel::get_app_tsx(AppServerTsxHelper* helper,
     pjsip_uri* uri = (pjsip_uri*)pjsip_uri_get_uri(&psu_hdr->name_addr);
     std::string served_user = PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, uri);
 
-    simservs* user_services = get_user_services(served_user, helper->trail());
+    simservs* user_services = get_user_services(served_user);
     mmtel_tsx = new MmtelTsx(helper, req, user_services);
   }
   else
@@ -90,10 +91,11 @@ AppServerTsx* Mmtel::get_app_tsx(AppServerTsxHelper* helper,
 // @returns The simservs object if it is relevant and present.  If there is
 // no simservs configuration for the user, returns a default simservs object
 // with all services disabled.
-simservs* Mmtel::get_user_services(std::string public_id, SAS::TrailId trail)
+simservs* Mmtel::get_user_services(std::string public_id)
 {
   // Fetch the user's simservs configuration from the XDMS
   LOG_DEBUG("Fetching simservs configuration for %s", public_id.c_str());
+  SAS::TrailId trail = SASContext::trail();
   {
     SAS::Event event(trail, SASEvent::RETRIEVING_SIMSERVS, 0);
     event.add_var_param(public_id);

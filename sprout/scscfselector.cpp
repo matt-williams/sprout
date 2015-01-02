@@ -44,6 +44,7 @@
 #include "log.h"
 #include "sas.h"
 #include "sproutsasevent.h"
+#include "sascontext.h"
 #include "sprout_pd_definitions.h"
 
 SCSCFSelector::SCSCFSelector(std::string configuration) :
@@ -156,10 +157,10 @@ SCSCFSelector::~SCSCFSelector()
 
 std::string SCSCFSelector::get_scscf(const std::vector<int> &mandatory,
                                      const std::vector<int> &optional,
-                                     const std::vector<std::string> &rejects,
-                                     SAS::TrailId trail)
+                                     const std::vector<std::string> &rejects)
 {
   // There are no configured S-CSCFs.
+  SAS::TrailId trail = SASContext::trail();
   if (_scscfs.empty())
   {
     SAS::Event event(trail, SASEvent::SCSCF_NONE_CONFIGURED, 0);

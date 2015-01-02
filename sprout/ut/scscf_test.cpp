@@ -6236,7 +6236,7 @@ TEST_F(SCSCFTest, FlowFailedResponse)
   free_txdata();
 
   // Sprout deletes the binding.
-  RegStore::AoR* aor_data = _store->get_aor_data(user, 0);
+  RegStore::AoR* aor_data = _store->get_aor_data(user);
   ASSERT_TRUE(aor_data != NULL);
   EXPECT_EQ(0u, aor_data->_bindings.size());
   delete aor_data; aor_data = NULL;

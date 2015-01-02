@@ -56,7 +56,7 @@ public:
   /// Updates the bgcf routes
   void update_routes();
 
-  std::vector<std::string> get_route(const std::string &domain, SAS::TrailId trail) const;
+  std::vector<std::string> get_route(const std::string &domain) const;
 
 private:
   std::map<std::string, std::vector<std::string>> _routes;

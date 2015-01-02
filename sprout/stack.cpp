@@ -393,7 +393,7 @@ static pj_bool_t on_rx_msg(pjsip_rx_data* rdata)
     event.add_static_param(load_monitor->get_rate_limit());
     SAS::report_event(event);
 
-    PJUtils::report_sas_to_from_markers(trail, rdata->msg_info.msg);
+    PJUtils::report_sas_to_from_markers(rdata->msg_info.msg);
 
     if ((rdata->msg_info.msg->line.req.method.id == PJSIP_REGISTER_METHOD) ||
         ((pjsip_method_cmp(&rdata->msg_info.msg->line.req.method, pjsip_get_subscribe_method())) == 0) ||
@@ -401,11 +401,11 @@ static pj_bool_t on_rx_msg(pjsip_rx_data* rdata)
     {
       // Omit the Call-ID for these requests, as the same Call-ID can be
       // reused over a long period of time and produce huge SAS trails.
-      PJUtils::mark_sas_call_branch_ids(trail, NULL, rdata->msg_info.msg);
+      PJUtils::mark_sas_call_branch_ids(NULL, rdata->msg_info.msg);
     }
     else
     {
-      PJUtils::mark_sas_call_branch_ids(trail, cid, rdata->msg_info.msg);
+      PJUtils::mark_sas_call_branch_ids(cid, rdata->msg_info.msg);
     }
 
     SAS::Marker end_marker(trail, MARKER_ID_END, 1u);

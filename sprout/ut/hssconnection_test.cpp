@@ -394,7 +394,7 @@ TEST_F(HssConnectionTest, BadXML_MissingServiceProfile)
   std::vector<std::string> uris;
   std::map<std::string, Ifcs> ifcs_map;
   std::string regstate;
-  _hss.update_registration_state("missingelement4", "", HSSConnection::REG, regstate, ifcs_map, uris, 0);
+  _hss.update_registration_state("missingelement4", "", HSSConnection::REG, regstate, ifcs_map, uris);
   EXPECT_TRUE(uris.empty());
   EXPECT_TRUE(log.contains("Malformed HSS XML"));
 }
@@ -405,7 +405,7 @@ TEST_F(HssConnectionTest, BadXML_MissingPublicIdentity)
   std::vector<std::string> uris;
   std::map<std::string, Ifcs> ifcs_map;
   std::string regstate;
-  _hss.update_registration_state("missingelement5", "", HSSConnection::REG, regstate, ifcs_map, uris, 0);
+  _hss.update_registration_state("missingelement5", "", HSSConnection::REG, regstate, ifcs_map, uris);
   EXPECT_TRUE(uris.empty());
   EXPECT_TRUE(log.contains("Malformed ServiceProfile XML"));
 }
@@ -416,7 +416,7 @@ TEST_F(HssConnectionTest, BadXML_MissingIdentity)
   std::vector<std::string> uris;
   std::map<std::string, Ifcs> ifcs_map;
   std::string regstate;
-  _hss.update_registration_state("missingelement6", "", HSSConnection::REG, regstate, ifcs_map, uris, 0);
+  _hss.update_registration_state("missingelement6", "", HSSConnection::REG, regstate, ifcs_map, uris);
   EXPECT_TRUE(uris.empty());
   EXPECT_TRUE(log.contains("Malformed PublicIdentity XML"));
 }
@@ -538,7 +538,7 @@ TEST_F(HssConnectionTest, SimpleAliases)
   std::string regstate;
   std::vector<std::string> unused_vector;
   std::deque<std::string> unused_deque;
-  _hss.update_registration_state("pubid46", "", HSSConnection::CALL, regstate, ifcs_map, unused_vector, aliases, unused_deque, unused_deque, 0);
+  _hss.update_registration_state("pubid46", "", HSSConnection::CALL, regstate, ifcs_map, unused_vector, aliases, unused_deque, unused_deque);
   ASSERT_EQ(3u, aliases.size());
   EXPECT_EQ("sip:321@example.com", aliases[0]);
   EXPECT_EQ("pubid46", aliases[1]);

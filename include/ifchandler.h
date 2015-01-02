@@ -78,8 +78,7 @@ public:
   bool filter_matches(const SessionCase& session_case,
                       bool is_registered,
                       bool is_initial_registration,
-                      pjsip_msg* msg,
-                      SAS::TrailId trail) const;
+                      pjsip_msg* msg) const;
 
   AsInvocation as_invocation() const;
 
@@ -90,14 +89,12 @@ private:
                           pjsip_msg *msg,
                           rapidxml::xml_node<>* spt,
                           std::string ifc_str,
-                          std::string server_name,
-                          SAS::TrailId trail);
+                          std::string server_name);
 
   static void invalid_ifc(std::string error,
                           std::string server_name,
                           int sas_event_id,
-                          int instance_id,
-                          SAS::TrailId trail);
+                          int instance_id);
 
   rapidxml::xml_node<>* _ifc;
   std::string _server_name;
@@ -127,8 +124,7 @@ public:
                  bool is_registered,
                  bool is_initial_registration,
                  pjsip_msg *msg,
-                 std::vector<AsInvocation>& application_servers,
-                 SAS::TrailId trail) const;
+                 std::vector<AsInvocation>& application_servers) const;
 
 private:
   std::shared_ptr<rapidxml::xml_document<> > _ifc_doc;

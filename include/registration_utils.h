@@ -55,8 +55,7 @@ void remove_bindings(RegStore* store,
                      HSSConnection* hss,
                      const std::string& aor,
                      const std::string& binding_id,
-                     const std::string& dereg_type,
-                     SAS::TrailId trail);
+                     const std::string& dereg_type);
 
 void register_with_application_servers(Ifcs& ifcs,
                                        RegStore* store,
@@ -64,13 +63,11 @@ void register_with_application_servers(Ifcs& ifcs,
                                        pjsip_tx_data* ok_response,
                                        int expires,
                                        bool is_initial_registration,
-                                       const std::string& served_user,
-                                       SAS::TrailId trail);
+                                       const std::string& served_user);
 
 void deregister_with_application_servers(Ifcs&,
                                          RegStore* store,
-                                         const std::string&,
-                                         SAS::TrailId trail);
+                                         const std::string&);
 
 } // namespace RegistrationUtils
 

@@ -43,6 +43,7 @@
 #include "bgcfservice.h"
 #include "log.h"
 #include "sas.h"
+#include "sascontext.h"
 #include "sproutsasevent.h"
 
 BgcfService::BgcfService(std::string configuration) :
@@ -143,10 +144,10 @@ BgcfService::~BgcfService()
   _updater = NULL;
 }
 
-std::vector<std::string> BgcfService::get_route(const std::string &domain,
-                                                SAS::TrailId trail) const
+std::vector<std::string> BgcfService::get_route(const std::string &domain) const
 {
   LOG_DEBUG("Getting route for URI domain %s via BGCF lookup", domain.c_str());
+  SAS::TrailId trail = SASContext::trail();
 
   // First try the specified domain.
   std::map<std::string, std::vector<std::string>>::const_iterator i = _routes.find(domain);

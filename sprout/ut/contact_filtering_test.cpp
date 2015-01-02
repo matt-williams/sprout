@@ -702,8 +702,7 @@ TEST_F(ContactFilteringFullStackTest, NoFiltering)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   EXPECT_EQ((unsigned)1, targets.size());
   EXPECT_FALSE(targets[0].deprioritized);
@@ -726,8 +725,7 @@ TEST_F(ContactFilteringFullStackTest, ImplicitFiltering)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   // Since we explicitly say that only INVITE and OPTIONS are
   // supported, and implicit preferences have their "require" flag
@@ -753,8 +751,7 @@ TEST_F(ContactFilteringFullStackTest, ImplicitFilteringDeprioritize)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   // Since we don't explicitly include a "methods" parameter, and
   // implicit preferences don't have their explicit flag set, nothing
@@ -793,8 +790,7 @@ TEST_F(ContactFilteringFullStackTest, ExplicitFilteringYesMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   EXPECT_EQ((unsigned)1, targets.size());
   EXPECT_FALSE(targets[0].deprioritized);
@@ -829,8 +825,7 @@ TEST_F(ContactFilteringFullStackTest, ExplicitFilteringUnknownMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   // Since the Accept-Header specifies a value that the binding doesn't
   // the target is deprioritized.
@@ -866,8 +861,7 @@ TEST_F(ContactFilteringFullStackTest, ExplicitFilteringNoMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   // Since the Accept-Header specifies a value that the binding doesn't
   // the target is deprioritized.
@@ -904,8 +898,7 @@ TEST_F(ContactFilteringFullStackTest, RejectFilteringMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   // Since the Accept-Header specifies a value that the binding doesn't
   // the target is deprioritized.
@@ -940,8 +933,7 @@ TEST_F(ContactFilteringFullStackTest, RejectFilteringNoMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   // Since the Accept-Header specifies a value that the binding doesn't
   // the target is deprioritized.
@@ -1005,8 +997,7 @@ TEST_F(ContactFilteringFullStackTest, LotsOfBindings)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   EXPECT_EQ((unsigned)5, targets.size());
 
@@ -1038,8 +1029,7 @@ TEST_F(ContactFilteringFullStackTest, GRUUNoMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   EXPECT_EQ((unsigned)0, targets.size());
 
@@ -1080,8 +1070,7 @@ TEST_F(ContactFilteringFullStackTest, GRUUMatch)
                              msg,
                              pool,
                              5,
-                             targets,
-                             1);
+                             targets);
 
   EXPECT_EQ((unsigned)1, targets.size());
 

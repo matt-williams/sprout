@@ -51,15 +51,14 @@ extern "C" {
 #include "sproutsasevent.h"
 #include "icscfrouter.h"
 #include "pjutils.h"
+#include "sascontext.h"
 
 
 ICSCFRouter::ICSCFRouter(HSSConnection* hss,
                          SCSCFSelector* scscf_selector,
-                         SAS::TrailId trail,
                          ACR* acr) :
   _hss(hss),
   _scscf_selector(scscf_selector),
-  _trail(trail),
   _acr(acr),
   _queried_caps(false),
   _hss_rsp(),
@@ -117,8 +116,7 @@ int ICSCFRouter::get_scscf(pj_pool_t* pool, pjsip_sip_uri*& scscf_sip_uri)
       // We queried capabilities from the HSS, so select a suitable S-CSCF.
       scscf = _scscf_selector->get_scscf(_hss_rsp.mandatory_caps,
                                          _hss_rsp.optional_caps,
-                                         _attempted_scscfs,
-                                         _trail);
+                                         _attempted_scscfs);
       LOG_DEBUG("SCSCF selected: %s", scscf.c_str());
     }
 
@@ -148,16 +146,17 @@ int ICSCFRouter::get_scscf(pj_pool_t* pool, pjsip_sip_uri*& scscf_sip_uri)
     }
   }
 
+  SAS::TrailId trail = SASContext::trail();
   if (status_code == PJSIP_SC_OK)
   {
-    SAS::Event event(_trail, SASEvent::SCSCF_SELECTION_SUCCESS, 0);
+    SAS::Event event(trail, SASEvent::SCSCF_SELECTION_SUCCESS, 0);
     event.add_var_param(scscf);
     event.add_var_param(_hss_rsp.scscf);
     SAS::report_event(event);
   }
   else
   {
-    SAS::Event event(_trail, SASEvent::SCSCF_SELECTION_FAILED, 0);
+    SAS::Event event(trail, SASEvent::SCSCF_SELECTION_FAILED, 0);
     std::string st_code = std::to_string(status_code);
     event.add_var_param(st_code);
     SAS::report_event(event);
@@ -255,13 +254,12 @@ bool ICSCFRouter::parse_capabilities(Json::Value& caps,
 
 ICSCFUARouter::ICSCFUARouter(HSSConnection* hss,
                              SCSCFSelector* scscf_selector,
-                             SAS::TrailId trail,
                              ACR* acr,
                              const std::string& impi,
                              const std::string& impu,
                              const std::string& visited_network,
                              const std::string& auth_type) :
-  ICSCFRouter(hss, scscf_selector, trail, acr),
+  ICSCFRouter(hss, scscf_selector, acr),
   _impi(impi),
   _impu(impu),
   _visited_network(visited_network),
@@ -330,11 +328,10 @@ int ICSCFUARouter::hss_query()
 
 ICSCFLIRouter::ICSCFLIRouter(HSSConnection* hss,
                              SCSCFSelector* scscf_selector,
-                             SAS::TrailId trail,
                              ACR* acr,
                              const std::string& impu,
                              bool originating) :
-  ICSCFRouter(hss, scscf_selector, trail, acr),
+  ICSCFRouter(hss, scscf_selector, acr),
   _impu(impu),
   _originating(originating)
 {

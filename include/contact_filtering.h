@@ -54,8 +54,7 @@ void filter_bindings_to_targets(const std::string& aor,
                                 pjsip_msg* msg,
                                 pj_pool_t* pool,
                                 int max_targets,
-                                TargetList& targets,
-                                SAS::TrailId trail);
+                                TargetList& targets);
 bool binding_to_target(const std::string& aor,
                        const std::string& binding_id,
                        const RegStore::AoR::Binding& binding,

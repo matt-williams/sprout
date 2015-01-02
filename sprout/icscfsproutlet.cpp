@@ -101,16 +101,13 @@ SproutletTsx* ICSCFSproutlet::get_tsx(SproutletTsxHelper* helper,
 }
 
 /// Get an ACR instance from the factory.
-///
-/// @param trail                SAS trail identifier to use for the ACR.
-ACR* ICSCFSproutlet::get_acr(SAS::TrailId trail)
+ACR* ICSCFSproutlet::get_acr()
 {
-  return _acr_factory->get_acr(trail, CALLING_PARTY, NODE_ROLE_TERMINATING);
+  return _acr_factory->get_acr(CALLING_PARTY, NODE_ROLE_TERMINATING);
 }
 
 /// Translates a Tel URI to a SIP URI (if ENUM is enabled).
-std::string ICSCFSproutlet::enum_translate_tel_uri(pjsip_tel_uri* uri,
-                                                   SAS::TrailId trail)
+std::string ICSCFSproutlet::enum_translate_tel_uri(pjsip_tel_uri* uri)
 {
   std::string new_uri;
   if (_enum_service != NULL)
@@ -122,7 +119,7 @@ std::string ICSCFSproutlet::enum_translate_tel_uri(pjsip_tel_uri* uri,
     if ((!_global_only_lookups) ||
         (PJUtils::is_user_global(user)))
     {
-      new_uri = _enum_service->lookup_uri_from_user(user, trail);
+      new_uri = _enum_service->lookup_uri_from_user(user);
     }
   }
   return new_uri;
@@ -159,7 +156,7 @@ ICSCFSproutletRegTsx::~ICSCFSproutletRegTsx()
 void ICSCFSproutletRegTsx::on_rx_initial_request(pjsip_msg* req)
 {
   // Create an ACR for this transaction.
-  _acr = _icscf->get_acr(trail());
+  _acr = _icscf->get_acr();
   _acr->rx_request(req);
 
   LOG_DEBUG("I-CSCF initialize transaction for REGISTER request");
@@ -229,7 +226,6 @@ void ICSCFSproutletRegTsx::on_rx_initial_request(pjsip_msg* req)
   // selection.
   _router = (ICSCFRouter*)new ICSCFUARouter(_icscf->get_hss_connection(),
                                             _icscf->get_scscf_selector(),
-                                            trail(),
                                             _acr,
                                             impi,
                                             impu,
@@ -377,7 +373,7 @@ void ICSCFSproutletRegTsx::on_cancel(int status_code, pjsip_msg* cancel_req)
       (cancel_req != NULL))
   {
     // Create and send an ACR for the CANCEL request.
-    ACR* acr = _icscf->get_acr(trail());
+    ACR* acr = _icscf->get_acr();
 
     // @TODO - timestamp from request.
     acr->rx_request(cancel_req);
@@ -422,7 +418,7 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
   pj_pool_t* pool = get_pool(req);
 
   // Create an ACR for this transaction.
-  _acr = _icscf->get_acr(trail());
+  _acr = _icscf->get_acr();
   _acr->rx_request(req);
 
   LOG_DEBUG("I-CSCF initialize transaction for non-REGISTER request");
@@ -474,7 +470,6 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
   // selection.
   _router = (ICSCFRouter*)new ICSCFLIRouter(_icscf->get_hss_connection(),
                                             _icscf->get_scscf_selector(),
-                                            trail(),
                                             _acr,
                                             impu,
                                             _originating);
@@ -668,7 +663,7 @@ void ICSCFSproutletTsx::on_cancel(int status_code, pjsip_msg* cancel_req)
       (cancel_req != NULL))
   {
     // Create and send an ACR for the CANCEL request.
-    ACR* acr = _icscf->get_acr(trail());
+    ACR* acr = _icscf->get_acr();
 
     // @TODO - timestamp from request.
     acr->rx_request(cancel_req);
@@ -684,7 +679,7 @@ bool ICSCFSproutletTsx::translate_tel_uri(pjsip_msg* req, pj_pool_t* pool)
 {
   bool found = false;
   std::string new_uri =
-    _icscf->enum_translate_tel_uri((pjsip_tel_uri*)req->line.req.uri, trail());
+    _icscf->enum_translate_tel_uri((pjsip_tel_uri*)req->line.req.uri);
 
   if (!new_uri.empty())
   {

@@ -47,6 +47,7 @@
 #include "utils.h"
 #include "log.h"
 #include "sproutsasevent.h"
+#include "sascontext.h"
 
 
 const boost::regex EnumService::CHARS_TO_STRIP_FROM_UAS = boost::regex("([^0-9+]|(?<=.)[^0-9])");
@@ -179,7 +180,7 @@ JSONEnumService::~JSONEnumService()
 }
 
 
-std::string JSONEnumService::lookup_uri_from_user(const std::string &user, SAS::TrailId trail) const
+std::string JSONEnumService::lookup_uri_from_user(const std::string &user) const
 {
   std::string uri;
 
@@ -297,7 +298,7 @@ DNSEnumService::~DNSEnumService()
 }
 
 
-std::string DNSEnumService::lookup_uri_from_user(const std::string& user, SAS::TrailId trail) const
+std::string DNSEnumService::lookup_uri_from_user(const std::string& user) const
 {
   if (user.empty())
   {
@@ -306,6 +307,7 @@ std::string DNSEnumService::lookup_uri_from_user(const std::string& user, SAS::T
   }
 
   // Log starting ENUM processing.
+  SAS::TrailId trail = SASContext::trail();
   SAS::Event event(trail, SASEvent::ENUM_START, 0);
   event.add_var_param(user);
   SAS::report_event(event);
@@ -350,7 +352,7 @@ std::string DNSEnumService::lookup_uri_from_user(const std::string& user, SAS::T
           // next key.
           try
           {
-            string = rule->replace(aus, trail);
+            string = rule->replace(aus);
             complete = rule->is_terminal();
           }
           catch(...) // LCOV_EXCL_START Only throws if expression too complex or similar hard-to-hit conditions
@@ -513,12 +515,12 @@ DNSEnumService::Rule::Rule(const boost::regex& regex,
 }
 
 
-std::string DNSEnumService::Rule::replace(const std::string& string, SAS::TrailId trail) const
+std::string DNSEnumService::Rule::replace(const std::string& string) const
 {
   // Perform the match and replace.
   std::string result = boost::regex_replace(string, _regex, _replace);
   // Log the results.
-  SAS::Event event(trail, SASEvent::ENUM_MATCH, 0);
+  SAS::Event event(SASContext::trail(), SASEvent::ENUM_MATCH, 0);
   event.add_static_param(_terminal);
   event.add_var_param(string);
   event.add_var_param(_regex.str());

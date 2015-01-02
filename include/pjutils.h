@@ -180,8 +180,7 @@ void resolve(const std::string& name,
 
 void resolve_next_hop(pjsip_tx_data* tdata,
                       int retries,
-                      std::vector<AddrInfo>& servers,
-                      SAS::TrailId trail);
+                      std::vector<AddrInfo>& servers);
 
 void blacklist_server(AddrInfo& server);
 
@@ -230,7 +229,7 @@ void create_random_token(size_t length, std::string& token);
 
 std::string get_header_value(pjsip_hdr*);
 
-void mark_sas_call_branch_ids(const SAS::TrailId trail, pjsip_cid_hdr* cid_hdr, pjsip_msg* msg);
+void mark_sas_call_branch_ids(pjsip_cid_hdr* cid_hdr, pjsip_msg* msg);
 
 bool is_emergency_registration(pjsip_contact_hdr* contact_hdr);
 
@@ -253,7 +252,7 @@ pj_str_t user_from_uri(pjsip_uri* uri);
 
 bool is_uri_gruu(pjsip_uri* uri);
 
-void report_sas_to_from_markers(SAS::TrailId trail, pjsip_msg* msg);
+void report_sas_to_from_markers(pjsip_msg* msg);
 
 void add_pcfa_header(pjsip_msg* msg,
                      pj_pool_t* pool,

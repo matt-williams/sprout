@@ -946,8 +946,7 @@ TEST_F(RegistrarTest, DeregisterAppServersWithNoBody)
                                      _hss_connection,
                                      user,
                                      "*",
-                                     HSSConnection::DEREG_ADMIN,
-                                     0);
+                                     HSSConnection::DEREG_ADMIN);
 
   SCOPED_TRACE("deREGISTER");
   // Check that we send a REGISTER to the AS on network-initiated deregistration

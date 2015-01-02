@@ -54,7 +54,6 @@ class ICSCFRouter
 public:
   ICSCFRouter(HSSConnection* hss,
               SCSCFSelector* scscf_selector,
-              SAS::TrailId trail,
               ACR* acr);
   virtual ~ICSCFRouter();
 
@@ -76,9 +75,6 @@ protected:
 
   /// S-CSCF selector used to select S-CSCFs from configuration.
   SCSCFSelector* _scscf_selector;
-
-  /// The SAS trail identifier used for logging.
-  SAS::TrailId _trail;
 
   /// The ACR for the request if ACR reported is enabled, NULL otherwise.
   ACR* _acr;
@@ -103,7 +99,6 @@ class ICSCFUARouter : public ICSCFRouter
 public:
   ICSCFUARouter(HSSConnection* hss,
                 SCSCFSelector* scscf_selector,
-                SAS::TrailId trail,
                 ACR* acr,
                 const std::string& impi,
                 const std::string& impu,
@@ -136,7 +131,6 @@ class ICSCFLIRouter : public ICSCFRouter
 public:
   ICSCFLIRouter(HSSConnection* hss,
                  SCSCFSelector* scscf_selector,
-                 SAS::TrailId trail,
                  ACR* acr,
                  const std::string& impu,
                  bool originating);

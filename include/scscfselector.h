@@ -56,8 +56,7 @@ public:
   // returns name of s-cscf with matching capabilities
   std::string get_scscf(const std::vector<int> &mandatory,
                         const std::vector<int> &optional,
-                        const std::vector<std::string> &rejects,
-                        SAS::TrailId trail);
+                        const std::vector<std::string> &rejects);
 private:
   typedef struct scscf
   {

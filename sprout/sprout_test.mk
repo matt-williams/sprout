@@ -82,7 +82,8 @@ TARGET_SOURCES := logger.cpp \
                   mobiletwinned.cpp \
                   mangelwurzel.cpp \
                   alarm.cpp \
-                  communicationmonitor.cpp
+                  communicationmonitor.cpp \
+                  sascontext.cpp
 
 TARGET_SOURCES_TEST := test_main.cpp \
                        fakecurl.cpp \

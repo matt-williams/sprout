@@ -51,6 +51,7 @@ extern "C" {
 #include "stack.h"
 #include "registrar.h"
 #include "registration_utils.h"
+#include "sascontext.h"
 #include "log.h"
 #include <boost/lexical_cast.hpp>
 #include "sproutsasevent.h"
@@ -70,13 +71,11 @@ void send_register_to_as(pjsip_rx_data* received_register,
                          pjsip_tx_data* ok_response,
                          AsInvocation& as,
                          int expires,
-                         const std::string&,
-                         SAS::TrailId);
+                         const std::string&);
 
 void RegistrationUtils::deregister_with_application_servers(Ifcs& ifcs,
                                                             RegStore* store,
-                                                            const std::string& served_user,
-                                                            SAS::TrailId trail)
+                                                            const std::string& served_user)
 {
   RegistrationUtils::register_with_application_servers(ifcs,
                                                        store,
@@ -84,8 +83,7 @@ void RegistrationUtils::deregister_with_application_servers(Ifcs& ifcs,
                                                        NULL,
                                                        0,
                                                        false,
-                                                       served_user,
-                                                       trail);
+                                                       served_user);
 }
 
 void RegistrationUtils::register_with_application_servers(Ifcs& ifcs,
@@ -94,8 +92,7 @@ void RegistrationUtils::register_with_application_servers(Ifcs& ifcs,
                                                           pjsip_tx_data *ok_response, // Can only be NULL if received_register is
                                                           int expires,
                                                           bool is_initial_registration,
-                                                          const std::string& served_user,
-                                                          SAS::TrailId trail)
+                                                          const std::string& served_user)
 {
   // Function preconditions
   if (received_register == NULL)
@@ -127,7 +124,7 @@ void RegistrationUtils::register_with_application_servers(Ifcs& ifcs,
 
     LOG_INFO("Generating a fake REGISTER to send to IfcHandler using AOR %s", served_user.c_str());
 
-    SAS::Event event(trail, SASEvent::REGISTER_AS_START, 0);
+    SAS::Event event(SASContext::trail(), SASEvent::REGISTER_AS_START, 0);
     event.add_var_param(served_user);
     SAS::report_event(event);
 
@@ -145,14 +142,14 @@ void RegistrationUtils::register_with_application_servers(Ifcs& ifcs,
     assert(status == PJ_SUCCESS);
 
     // As per TS 24.229, section 5.4.1.7, note 1, we don't fill in any P-Associated-URI details.
-    ifcs.interpret(SessionCase::Originating, true, is_initial_registration, tdata->msg, as_list, trail);
+    ifcs.interpret(SessionCase::Originating, true, is_initial_registration, tdata->msg, as_list);
 
     status = pjsip_tx_data_dec_ref(tdata);
     assert(status == PJSIP_EBUFDESTROYED);
   }
   else
   {
-    ifcs.interpret(SessionCase::Originating, true, is_initial_registration, received_register->msg_info.msg, as_list, trail);
+    ifcs.interpret(SessionCase::Originating, true, is_initial_registration, received_register->msg_info.msg, as_list);
   }
   LOG_INFO("Found %d Application Servers", as_list.size());
 
@@ -161,7 +158,7 @@ void RegistrationUtils::register_with_application_servers(Ifcs& ifcs,
        as_iter != as_list.end();
        as_iter++)
   {
-    send_register_to_as(received_register, ok_response, *as_iter, expires, served_user, trail);
+    send_register_to_as(received_register, ok_response, *as_iter, expires, served_user);
   }
 }
 
@@ -190,8 +187,7 @@ void send_register_to_as(pjsip_rx_data *received_register,
                          pjsip_tx_data *ok_response,
                          AsInvocation& as,
                          int expires,
-                         const std::string& served_user,
-                         SAS::TrailId trail)
+                         const std::string& served_user)
 {
   pj_status_t status;
   pjsip_tx_data *tdata;
@@ -313,6 +309,7 @@ void send_register_to_as(pjsip_rx_data *received_register,
   }
 
   // Set the SAS trail on the request.
+  SAS::TrailId trail = SASContext::trail();
   set_trail(tdata, trail);
 
   // Allocate a temporary structure to record the default handling for this
@@ -334,7 +331,7 @@ void notify_application_servers()
   // TODO: implement as part of reg events package
 }
 
-static bool expire_bindings(RegStore *store, const std::string& aor, const std::string& binding_id, SAS::TrailId trail)
+static bool expire_bindings(RegStore *store, const std::string& aor, const std::string& binding_id)
 {
   // We need the retry loop to handle the store's compare-and-swap.
   bool all_bindings_expired = false;
@@ -376,12 +373,11 @@ void RegistrationUtils::remove_bindings(RegStore* store,
                                         HSSConnection* hss,
                                         const std::string& aor,
                                         const std::string& binding_id,
-                                        const std::string& dereg_type,
-                                        SAS::TrailId trail)
+                                        const std::string& dereg_type)
 {
   LOG_INFO("Remove binding(s) %s from IMPU %s", binding_id.c_str(), aor.c_str());
 
-  if (expire_bindings(store, aor, binding_id, trail))
+  if (expire_bindings(store, aor, binding_id))
   {
     // All bindings have been expired, so do deregistration processing for the
     // IMPU.
@@ -392,14 +388,13 @@ void RegistrationUtils::remove_bindings(RegStore* store,
                                                         "",
                                                         dereg_type,
                                                         ifc_map,
-                                                        uris,
-                                                        trail);
+                                                        uris);
 
     if (http_code == HTTP_OK)
     {
       // Note that 3GPP TS 24.229 V12.0.0 (2013-03) 5.4.1.7 doesn't specify that any binding information
       // should be passed on the REGISTER message, so we don't need the binding ID.
-      deregister_with_application_servers(ifc_map[aor], store, aor, trail);
+      deregister_with_application_servers(ifc_map[aor], store, aor);
       notify_application_servers();
     }
   }

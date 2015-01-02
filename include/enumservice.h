@@ -62,7 +62,7 @@ public:
   virtual ~EnumService() {}
 
   /// Translate a PSTN number to a SIP URI.
-  virtual std::string lookup_uri_from_user(const std::string& user, SAS::TrailId trail) const = 0;
+  virtual std::string lookup_uri_from_user(const std::string& user) const = 0;
 
   // Parse a string of the form !<regex>!<replace>! into a regular expression
   // and a replacement string.
@@ -88,7 +88,7 @@ public:
   JSONEnumService(std::string configuration = "./enum.json");
   ~JSONEnumService();
 
-  std::string lookup_uri_from_user(const std::string& user, SAS::TrailId trail) const;
+  std::string lookup_uri_from_user(const std::string& user) const;
 
 private:
   struct NumberPrefix
@@ -116,7 +116,7 @@ public:
                  CommunicationMonitor* comm_monitor = NULL);
   ~DNSEnumService();
 
-  std::string lookup_uri_from_user(const std::string& user, SAS::TrailId trail) const;
+  std::string lookup_uri_from_user(const std::string& user) const;
 
   // Characters to strip from a key before turning it into a domain.  This is
   // all non-digit characters.
@@ -140,7 +140,7 @@ private:
     // Whether this rule is terminal.
     inline bool is_terminal() const { return _terminal; }
     // Apply the regular expression match/replace processing for this rule.
-    std::string replace(const std::string& string, SAS::TrailId trail) const;
+    std::string replace(const std::string& string) const;
     // Compares two rules according to order and preference.
     static bool compare_order_preference(Rule first, Rule second);
 

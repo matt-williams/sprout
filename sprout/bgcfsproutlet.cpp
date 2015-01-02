@@ -76,18 +76,15 @@ SproutletTsx* BGCFSproutlet::get_tsx(SproutletTsxHelper* helper,
 ///
 /// @return            - The URIs to route the message on to (in order).
 /// @param domain      - The domain to find a route for.
-std::vector<std::string> BGCFSproutlet::get_route(const std::string &domain,
-                                                  SAS::TrailId trail) const
+std::vector<std::string> BGCFSproutlet::get_route(const std::string &domain) const
 {
-  return _bgcf_service->get_route(domain, trail);
+  return _bgcf_service->get_route(domain);
 }
 
 /// Get an ACR instance from the factory.
-///
-/// @param trail                SAS trail identifier to use for the ACR.
-ACR* BGCFSproutlet::get_acr(SAS::TrailId trail)
+ACR* BGCFSproutlet::get_acr()
 {
-  return _acr_factory->get_acr(trail, CALLING_PARTY, NODE_ROLE_TERMINATING);
+  return _acr_factory->get_acr(CALLING_PARTY, NODE_ROLE_TERMINATING);
 }
 
 
@@ -114,7 +111,7 @@ BGCFSproutletTsx::~BGCFSproutletTsx()
 void BGCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
 {
   // Create an ACR for this transaction.
-  _acr = _bgcf->get_acr(trail());
+  _acr = _bgcf->get_acr();
   _acr->rx_request(req);
 
   // Extract the domain from the ReqURI if this is a SIP URI.
@@ -126,7 +123,7 @@ void BGCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
   }
 
   // Find the downstream routes based on the domain.
-  std::vector<std::string> bgcf_routes = _bgcf->get_route(domain, trail());
+  std::vector<std::string> bgcf_routes = _bgcf->get_route(domain);
 
   if (!bgcf_routes.empty())
   {
@@ -223,7 +220,7 @@ void BGCFSproutletTsx::on_cancel(int status_code, pjsip_msg* cancel_req)
       (cancel_req != NULL))
   {
     // Create and send an ACR for the CANCEL request.
-    ACR* acr = _bgcf->get_acr(trail());
+    ACR* acr = _bgcf->get_acr();
 
     // @TODO - timestamp from request.
     acr->rx_request(cancel_req);

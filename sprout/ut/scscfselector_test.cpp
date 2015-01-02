@@ -74,7 +74,7 @@ public:
 
   void test(SCSCFSelector& scscf_)
   {
-    string ret = scscf_.get_scscf(_mandate, _optional, _rejects, 0);
+    string ret = scscf_.get_scscf(_mandate, _optional, _rejects);
     EXPECT_EQ(_out, ret);
   }
 

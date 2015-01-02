@@ -38,6 +38,7 @@
 #include "constants.h"
 #include "pjutils.h"
 #include "sproutsasevent.h"
+#include "sascontext.h"
 
 #include <limits>
 #include <boost/algorithm/string.hpp>
@@ -49,8 +50,7 @@ void filter_bindings_to_targets(const std::string& aor,
                                 pjsip_msg* msg,
                                 pj_pool_t* pool,
                                 int max_targets,
-                                TargetList& targets,
-                                SAS::TrailId trail)
+                                TargetList& targets)
 {
   std::vector<pjsip_accept_contact_hdr*> accept_headers;
   std::vector<pjsip_reject_contact_hdr*> reject_headers;
@@ -198,6 +198,7 @@ void filter_bindings_to_targets(const std::string& aor,
   }
 
   // SAS logging now we know how many targets we have.
+  SAS::TrailId trail = SASContext::trail();
   if (request_uri_is_gruu)
   {
     LOG_DEBUG("%d of %d bindings rejected because a GRUU was specified", bindings_rejected_due_to_gruu, bindings.size());

@@ -510,8 +510,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                                   std::map<std::string, Ifcs >& ifcs_map,
                                                   std::vector<std::string>& associated_uris,
                                                   std::deque<std::string>& ccfs,
-                                                  std::deque<std::string>& ecfs,
-                                                  SAS::TrailId trail)
+                                                  std::deque<std::string>& ecfs)
 {
   std::vector<std::string> unused_aliases;
   return update_registration_state(public_user_identity,
@@ -522,8 +521,7 @@ HTTPCode HSSConnection::update_registration_state(const std::string& public_user
                                    associated_uris,
                                    unused_aliases,
                                    ccfs,
-                                   ecfs,
-                                   trail);
+                                   ecfs);
 }
 
 HTTPCode HSSConnection::update_registration_state(const std::string& public_user_identity,

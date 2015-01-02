@@ -176,10 +176,11 @@ public:
   virtual ~ACRFactory();
 
   /// Get an ACR instance from the factory.
-  /// @param trail                SAS trail identifier to use for the ACR.
   /// @param initiator            The initiator of the SIP transaction (calling
   ///                             or called party).
-  virtual ACR* get_acr(SAS::TrailId trail, Initiator initiator, NodeRole role);
+  /// @param role                 The role that this node is playing
+  ///                             (originating or terminating).
+  virtual ACR* get_acr(Initiator initiator, NodeRole role);
 };
 
 
@@ -189,7 +190,6 @@ class RalfACR : public ACR
 public:
   /// Constructor.
   RalfACR(HttpConnection* ralf,
-          SAS::TrailId trail,
           Node node_functionality,
           Initiator initiator,
           NodeRole role);
@@ -356,7 +356,6 @@ private:
   std::string hdr_contents(pjsip_hdr* hdr);
 
   HttpConnection* _ralf;
-  SAS::TrailId _trail;
 
   Initiator _initiator;
 
@@ -453,12 +452,11 @@ public:
   ~RalfACRFactory();
 
   /// Get an ACR instance from the factory.
-  /// @param trail                SAS trail identifier to use for the ACR.
   /// @param initiator            The initiator of the SIP transaction (calling
   ///                             or called party).
   /// @param role                 The role that this node is playing
   ///                             (originating or terminating).
-  virtual ACR* get_acr(SAS::TrailId trail, Initiator initiator, NodeRole role);
+  virtual ACR* get_acr(Initiator initiator, NodeRole role);
 
 private:
   HttpConnection* _ralf;

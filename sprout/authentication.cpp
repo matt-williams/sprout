@@ -628,8 +628,8 @@ pj_bool_t authenticate_rx_request(pjsip_rx_data* rdata)
   SAS::Marker start_marker(trail, MARKER_ID_START, 1u);
   SAS::report_marker(start_marker);
 
-  PJUtils::report_sas_to_from_markers(trail, rdata->msg_info.msg);
-  PJUtils::mark_sas_call_branch_ids(trail, NULL, rdata->msg_info.msg);
+  PJUtils::report_sas_to_from_markers(rdata->msg_info.msg);
+  PJUtils::mark_sas_call_branch_ids(NULL, rdata->msg_info.msg);
 
   // Add a SAS end marker
   SAS::Marker end_marker(trail, MARKER_ID_END, 1u);
@@ -637,8 +637,7 @@ pj_bool_t authenticate_rx_request(pjsip_rx_data* rdata)
 
   // Create an ACR for the message and pass the request to it.  Role is always
   // considered originating for a REGISTER request.
-  ACR* acr = acr_factory->get_acr(trail,
-                                  CALLING_PARTY,
+  ACR* acr = acr_factory->get_acr(CALLING_PARTY,
                                   NODE_ROLE_ORIGINATING);
   acr->rx_request(rdata->msg_info.msg, rdata->pkt_info.timestamp);
 

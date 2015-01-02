@@ -113,7 +113,6 @@ private:
           const SessionCase& session_case,
           const std::string& served_user,
           bool is_registered,
-          SAS::TrailId trail,
           Ifcs& ifcs,
           ACR* acr);
   ~AsChain();
@@ -139,7 +138,6 @@ private:
   const SessionCase& session_case() const;
   size_t size() const;
   bool matches_target(pjsip_tx_data* tdata) const;
-  SAS::TrailId trail() const;
   ACR* acr() const;
 
   AsChainTable* const _as_chain_table;
@@ -166,7 +164,6 @@ private:
   const SessionCase& _session_case;
   const std::string _served_user;
   const bool _is_registered;
-  const SAS::TrailId _trail;
   const Ifcs _ifcs;  //< List of iFCs. Owned by this object.
 
   /// A pointer to the ACR for this chain if Rf billing is enabled.
@@ -234,11 +231,6 @@ public:
       _as_chain->dec_ref();
       _as_chain = NULL;
     }
-  }
-
-  SAS::TrailId trail() const
-  {
-    return ((_as_chain == NULL) ? 0 : _as_chain->trail());
   }
 
   ACR* acr() const
@@ -322,7 +314,6 @@ public:
                                      const SessionCase& session_case,
                                      const std::string& served_user,
                                      bool is_registered,
-                                     SAS::TrailId trail,
                                      Ifcs& ifcs,
                                      ACR* acr);
 

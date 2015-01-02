@@ -53,6 +53,7 @@ extern "C" {
 #include "constants.h"
 #include "custom_headers.h"
 #include "sasevent.h"
+#include "sascontext.h"
 
 static const int DEFAULT_RETRIES = 5;
 static const int DEFAULT_BLACKLIST_DURATION = 30;
@@ -904,8 +905,7 @@ void PJUtils::resolve(const std::string& name,
 /// Resolves the next hop target of the SIP message
 void PJUtils::resolve_next_hop(pjsip_tx_data* tdata,
                                int retries,
-                               std::vector<AddrInfo>& servers,
-                               SAS::TrailId trail)
+                               std::vector<AddrInfo>& servers)
 {
   // Get the next hop URI from the message and parse out the destination, port
   // and transport.
@@ -1164,7 +1164,7 @@ pj_status_t PJUtils::send_request(pjsip_tx_data* tdata,
   if (tdata->tp_sel.type != PJSIP_TPSELECTOR_TRANSPORT)
   {
     // No transport determined, so resolve the next hop for the message.
-    resolve_next_hop(tdata, retries, sss->servers, get_trail(tdata));
+    resolve_next_hop(tdata, retries, sss->servers);
 
     if (!sss->servers.empty())
     {
@@ -1191,7 +1191,7 @@ pj_status_t PJUtils::send_request(pjsip_tx_data* tdata,
     set_trail(tsx, get_trail(tdata));
     if (log_sas_branch)
     {
-      PJUtils::mark_sas_call_branch_ids(get_trail(tdata), NULL, tdata->msg);
+      PJUtils::mark_sas_call_branch_ids(NULL, tdata->msg);
     }
 
     // Set up the module data for the new transaction to reference
@@ -1329,7 +1329,7 @@ pj_status_t PJUtils::send_request_stateless(pjsip_tx_data* tdata, int retries)
   if (tdata->tp_sel.type != PJSIP_TPSELECTOR_TRANSPORT)
   {
     // No transport pre-selected so resolve the next hop to a set of servers.
-    resolve_next_hop(tdata, retries, sss->servers, get_trail(tdata));
+    resolve_next_hop(tdata, retries, sss->servers);
 
     if (!sss->servers.empty())
     {
@@ -1604,8 +1604,11 @@ std::string PJUtils::get_header_value(pjsip_hdr* header)
 }
 
 /// Add SAS markers for the specified call ID and branch IDs on the message (either may be omitted).
-void PJUtils::mark_sas_call_branch_ids(const SAS::TrailId trail, pjsip_cid_hdr* cid_hdr, pjsip_msg* msg)
+void PJUtils::mark_sas_call_branch_ids(pjsip_cid_hdr* cid_hdr, pjsip_msg* msg)
 {
+  // Get SAS trail ID.
+  SAS::TrailId trail = SASContext::trail();
+
   // If we have a call ID, log it.
   if (cid_hdr != NULL)
   {
@@ -1865,7 +1868,7 @@ pj_str_t PJUtils::user_from_uri(pjsip_uri* uri)
   }
 }
 
-void PJUtils::report_sas_to_from_markers(SAS::TrailId trail, pjsip_msg* msg)
+void PJUtils::report_sas_to_from_markers(pjsip_msg* msg)
 {
   // Get the method.  On the request, this is on the request line.  On the
   // response, it is in the CSeq header.
@@ -1911,6 +1914,9 @@ void PJUtils::report_sas_to_from_markers(SAS::TrailId trail, pjsip_msg* msg)
   {
     from_uri = (pjsip_uri*)pjsip_uri_get_uri(from_hdr->uri);
   }
+
+  // Get SAS trail ID.
+  SAS::TrailId trail = SASContext::trail();
 
   // Look at the method to decide which marker to use.
   if (is_register)

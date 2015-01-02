@@ -76,7 +76,7 @@ public:
 private:
   XDMConnection* _xdmc;
 
-  simservs *get_user_services(std::string public_id, SAS::TrailId trail);
+  simservs *get_user_services(std::string public_id);
 };
 
 // Cut-down AS that invokes MMTEL-style call diversion configured through

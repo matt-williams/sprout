@@ -49,11 +49,11 @@ extern "C" {
 #include "registration_utils.h"
 #include "stack.h"
 #include "pjutils.h"
+#include "sascontext.h"
 
 static bool reg_store_access_common(RegStore::AoR** aor_data, bool& previous_aor_data_alloced,
                                     std::string aor_id, RegStore* current_store,
-                                    RegStore* remote_store, RegStore::AoR** previous_aor_data,
-                                    SAS::TrailId trail)
+                                    RegStore* remote_store, RegStore::AoR** previous_aor_data)
 {
   // Find the current bindings for the AoR.
   delete *aor_data;
@@ -108,7 +108,7 @@ static bool reg_store_access_common(RegStore::AoR** aor_data, bool& previous_aor
   return true;
 }
 
-static void report_sip_all_register_marker(SAS::TrailId trail, std::string uri_str)
+static void report_sip_all_register_marker(std::string uri_str)
 {
   // Parse the SIP URI and get the username from it.
   pj_pool_t* tmp_pool = pj_pool_create(&stack_data.cp.factory, "handlers", 1024, 512, NULL);
@@ -119,7 +119,7 @@ static void report_sip_all_register_marker(SAS::TrailId trail, std::string uri_s
     pj_str_t user = PJUtils::user_from_uri(uri);
 
     // Create and report the marker.
-    SAS::Marker sip_all_register(trail, MARKER_ID_SIP_ALL_REGISTER, 1u);
+    SAS::Marker sip_all_register(SASContext::trail(), MARKER_ID_SIP_ALL_REGISTER, 1u);
     sip_all_register.add_var_param(uri_str);
     sip_all_register.add_var_param(user.slen, user.ptr);
     SAS::report_marker(sip_all_register);
@@ -155,12 +155,13 @@ void RegistrationTimeoutTask::run()
 
   send_http_reply(HTTP_OK);
 
-  SAS::Marker start_marker(trail(), MARKER_ID_START, 1u);
+  SAS::TrailId trail = SASContext::trail();
+  SAS::Marker start_marker(trail, MARKER_ID_START, 1u);
   SAS::report_marker(start_marker);
 
   handle_response();
 
-  SAS::Marker end_marker(trail(), MARKER_ID_END, 1u);
+  SAS::Marker end_marker(trail, MARKER_ID_END, 1u);
   SAS::report_marker(end_marker);
 
   delete this;
@@ -175,12 +176,13 @@ void AuthTimeoutTask::run()
     return;
   }
 
-  SAS::Marker start_marker(trail(), MARKER_ID_START, 1u);
+  SAS::TrailId trail = SASContext::trail();
+  SAS::Marker start_marker(trail, MARKER_ID_START, 1u);
   SAS::report_marker(start_marker);
 
   HTTPCode rc = handle_response(_req.get_rx_body());
 
-  SAS::Marker end_marker(trail(), MARKER_ID_END, 1u);
+  SAS::Marker end_marker(trail, MARKER_ID_END, 1u);
   SAS::report_marker(end_marker);
 
   if (rc != HTTP_OK)
@@ -259,7 +261,7 @@ void RegistrationTimeoutTask::handle_response()
   }
 
   delete aor_data;
-  report_sip_all_register_marker(trail(), _aor_id);
+  report_sip_all_register_marker(_aor_id);
 }
 
 RegStore::AoR* RegistrationTimeoutTask::set_aor_data(RegStore* current_store,
@@ -275,7 +277,7 @@ RegStore::AoR* RegistrationTimeoutTask::set_aor_data(RegStore* current_store,
   do
   {
     if (!reg_store_access_common(&aor_data, previous_aor_data_alloced, aor_id,
-                                 current_store, remote_store, &previous_aor_data, trail()))
+                                 current_store, remote_store, &previous_aor_data))
     {
       // LCOV_EXCL_START - local store (used in testing) never fails
       break;
@@ -438,7 +440,7 @@ RegStore::AoR* DeregistrationTask::set_aor_data(RegStore* current_store,
   do
   {
     if (!reg_store_access_common(&aor_data, previous_aor_data_alloced, aor_id,
-                                 current_store, remote_store, &previous_aor_data, trail()))
+                                 current_store, remote_store, &previous_aor_data))
     {
       // LCOV_EXCL_START - local store (used in testing) never fails
       break;
@@ -495,7 +497,7 @@ RegStore::AoR* DeregistrationTask::set_aor_data(RegStore* current_store,
     std::string state;
     LOG_INFO("ID %s", aor_id.c_str());
 
-    if (_cfg->_hss->get_registration_data(aor_id, state, ifc_map, uris, 0) == HTTP_OK)
+    if (_cfg->_hss->get_registration_data(aor_id, state, ifc_map, uris) == HTTP_OK)
     {
       RegistrationUtils::deregister_with_application_servers(ifc_map[aor_id],
                                                              current_store,
@@ -530,7 +532,7 @@ HTTPCode AuthTimeoutTask::handle_response(std::string body)
       ((json_body)["impu"].isString()))
   {
     _impu = json_body.get("impu", "").asString();
-    report_sip_all_register_marker(trail(), _impu);
+    report_sip_all_register_marker(_impu);
   }
   else
   {

@@ -200,8 +200,7 @@ void SCSCFSproutlet::remove_binding(const std::string& aor,
                                      _hss,
                                      aor,
                                      binding_id,
-                                     HSSConnection::DEREG_TIMEOUT,
-                                     trail);
+                                     HSSConnection::DEREG_TIMEOUT);
 }
 
 
@@ -282,7 +281,7 @@ std::string SCSCFSproutlet::translate_request_uri(pjsip_msg* req,
            (!PJUtils::is_uri_gruu(uri))))
       {
         LOG_DEBUG("Performing ENUM lookup for user %s", user.c_str());
-        new_uri = _enum_service->lookup_uri_from_user(user, trail);
+        new_uri = _enum_service->lookup_uri_from_user(user);
       }
     }
   }
@@ -317,12 +316,11 @@ std::string SCSCFSproutlet::translate_request_uri(pjsip_msg* req,
 
 
 /// Get an ACR instance from the factory.
-/// @param trail                SAS trail identifier to use for the ACR.
 /// @param initiator            The initiator of the SIP transaction (calling
 ///                             or called party).
-ACR* SCSCFSproutlet::get_acr(SAS::TrailId trail, Initiator initiator, NodeRole role)
+ACR* SCSCFSproutlet::get_acr(Initiator initiator, NodeRole role)
 {
-  return _acr_factory->get_acr(trail, initiator, role);
+  return _acr_factory->get_acr(initiator, role);
 }
 
 
@@ -446,8 +444,7 @@ void SCSCFSproutletTsx::on_rx_in_dialog_request(pjsip_msg* req)
   add_session_expires(req);
 
   // Create an ACR for this request and pass the request to it.
-  _acr = _scscf->get_acr(trail(),
-                         CALLING_PARTY,
+  _acr = _scscf->get_acr(CALLING_PARTY,
                          get_billing_role());
 
   // @TODO - request timestamp???
@@ -589,7 +586,7 @@ void SCSCFSproutletTsx::on_rx_cancel(int status_code, pjsip_msg* cancel_req)
     {
       role = NODE_ROLE_TERMINATING;
     }
-    ACR* acr = _scscf->get_acr(trail(), CALLING_PARTY, role);
+    ACR* acr = _scscf->get_acr(CALLING_PARTY, role);
 
     // @TODO - timestamp from request.
     acr->rx_request(cancel_req);
@@ -692,8 +689,7 @@ pjsip_status_code SCSCFSproutletTsx::determine_served_user(pjsip_msg* req)
       }
 
       // Create a new ACR for this request.
-      _acr = _scscf->get_acr(trail(),
-                             CALLING_PARTY,
+      _acr = _scscf->get_acr(CALLING_PARTY,
                              NODE_ROLE_ORIGINATING);
 
       Ifcs ifcs;
@@ -741,8 +737,7 @@ pjsip_status_code SCSCFSproutletTsx::determine_served_user(pjsip_msg* req)
     std::string served_user = served_user_from_msg(req);
 
     // Create a new ACR for this request.
-    _acr = _scscf->get_acr(trail(),
-                           CALLING_PARTY,
+    _acr = _scscf->get_acr(CALLING_PARTY,
                            _session_case->is_originating() ?
                                 NODE_ROLE_ORIGINATING : NODE_ROLE_TERMINATING);
 
@@ -862,7 +857,6 @@ AsChainLink SCSCFSproutletTsx::create_as_chain(Ifcs ifcs,
                                                  *_session_case,
                                                  served_user,
                                                  is_registered,
-                                                 trail(),
                                                  ifcs,
                                                  _acr);
   LOG_DEBUG("S-CSCF sproutlet transaction %p linked to AsChain %s",
@@ -1209,8 +1203,7 @@ void SCSCFSproutletTsx::route_to_ue_bindings(pjsip_msg* req)
                                req,
                                pool,
                                MAX_FORKING,
-                               targets,
-                               trail());
+                               targets);
   }
 
   if (targets.empty())

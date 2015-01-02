@@ -136,10 +136,9 @@ private:
                                     SAS::TrailId trail);
 
   /// Get an ACR instance from the factory.
-  /// @param trail                SAS trail identifier to use for the ACR.
   /// @param initiator            The initiator of the SIP transaction (calling
   ///                             or called party).
-  ACR* get_acr(SAS::TrailId trail, Initiator initiator, NodeRole role);
+  ACR* get_acr(Initiator initiator, NodeRole role);
 
   friend class SCSCFSproutletTsx;
 

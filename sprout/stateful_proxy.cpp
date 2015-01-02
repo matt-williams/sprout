@@ -334,7 +334,7 @@ static pj_bool_t proxy_on_rx_response(pjsip_rx_data *rdata)
 
     // Report SIP call and branch ID markers on the trail to make sure it gets
     // associated with the INVITE transaction at SAS.
-    PJUtils::mark_sas_call_branch_ids(get_trail(rdata), rdata->msg_info.cid, rdata->msg_info.msg);
+    PJUtils::mark_sas_call_branch_ids(rdata->msg_info.cid, rdata->msg_info.msg);
 
     // We don't know the transaction, so be pessimistic and strip
     // everything.
@@ -437,8 +437,7 @@ void process_tsx_request(pjsip_rx_data* rdata)
       return;
     }
 
-    acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                    CALLING_PARTY,
+    acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                     acr_node_role(rdata->msg_info.msg));
   }
   else
@@ -507,8 +506,7 @@ void process_tsx_request(pjsip_rx_data* rdata)
       {
         // We haven't found an existing ACR for this transaction, so create a
         // new one.
-        acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                        CALLING_PARTY,
+        acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                         acr_node_role(rdata->msg_info.msg));
       }
     }
@@ -540,23 +538,19 @@ void process_tsx_request(pjsip_rx_data* rdata)
           // node roles. Currently we (incorrectly) assume that all requests
           // were initiated by the calling party, so the `orig` ACR comes
           // first, and the `term` ACR is the downstream one.
-          acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                          CALLING_PARTY,
+          acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                           NODE_ROLE_ORIGINATING);
-          downstream_acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                                     CALLING_PARTY,
+          downstream_acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                                      NODE_ROLE_TERMINATING);
         }
         else if (charge_orig)
         {
-          acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                          CALLING_PARTY,
+          acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                           NODE_ROLE_ORIGINATING);
         }
         else if (charge_term)
         {
-          acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                          CALLING_PARTY,
+          acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                           NODE_ROLE_TERMINATING);
         }
       }
@@ -604,7 +598,7 @@ void process_tsx_request(pjsip_rx_data* rdata)
     // associated with the INVITE transaction at SAS.  There's no need to
     // report the branch IDs as they won't be used for correlation.
     LOG_DEBUG("Statelessly forwarding ACK");
-    PJUtils::mark_sas_call_branch_ids(get_trail(rdata), rdata->msg_info.cid, NULL);
+    PJUtils::mark_sas_call_branch_ids(rdata->msg_info.cid, NULL);
 
     trust->process_request(tdata);
 
@@ -813,8 +807,7 @@ void process_cancel_request(pjsip_rx_data* rdata)
   uas_data->cancel_pending_uac_tsx(0, false);
 
   // Create and send an ACR for the CANCEL request.
-  ACR* acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                       CALLING_PARTY,
+  ACR* acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                        acr_node_role(rdata->msg_info.msg));
   acr->rx_request(rdata->msg_info.msg, rdata->pkt_info.timestamp);
   acr->send_message();
@@ -892,8 +885,7 @@ static void reject_request(pjsip_rx_data* rdata, int status_code)
 {
   pj_status_t status;
 
-  ACR* acr = cscf_acr_factory->get_acr(get_trail(rdata),
-                                       CALLING_PARTY,
+  ACR* acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                        acr_node_role(rdata->msg_info.msg));
   acr->rx_request(rdata->msg_info.msg, rdata->pkt_info.timestamp);
 
@@ -1773,7 +1765,7 @@ void UASTransaction::cancel_trying_timer()
 
 // The info parameter is only filled in correctly if this function
 // returns true,
-bool UASTransaction::get_data_from_hss(std::string public_id, HSSCallInformation& info, SAS::TrailId trail)
+bool UASTransaction::get_data_from_hss(std::string public_id, HSSCallInformation& info)
 {
   std::map<std::string, HSSCallInformation>::iterator data = cached_hss_data.find(public_id);
   bool rc = false;
@@ -1804,7 +1796,7 @@ bool UASTransaction::get_data_from_hss(std::string public_id, HSSCallInformation
 bool UASTransaction::is_user_registered(std::string public_id)
 {
   HSSCallInformation data;
-  bool success = get_data_from_hss(public_id, data, trail());
+  bool success = get_data_from_hss(public_id, data);
   if (success)
   {
     return data.registered;
@@ -1819,10 +1811,10 @@ bool UASTransaction::is_user_registered(std::string public_id)
 // Look up the associated URIs for the given public ID, using the cache if possible (and caching them and the iFC otherwise).
 // The uris parameter is only filled in correctly if this function
 // returns true,
-bool UASTransaction::get_associated_uris(std::string public_id, std::vector<std::string>& uris, SAS::TrailId trail)
+bool UASTransaction::get_associated_uris(std::string public_id, std::vector<std::string>& uris)
 {
   HSSCallInformation data;
-  bool success = get_data_from_hss(public_id, data, trail);
+  bool success = get_data_from_hss(public_id, data);
   if (success)
   {
     uris = data.uris;
@@ -1833,10 +1825,10 @@ bool UASTransaction::get_associated_uris(std::string public_id, std::vector<std:
 // Look up the Ifcs for the given public ID, using the cache if possible (and caching them and the associated URIs otherwise).
 // The ifcs parameter is only filled in correctly if this function
 // returns true,
-bool UASTransaction::lookup_ifcs(std::string public_id, Ifcs& ifcs, SAS::TrailId trail)
+bool UASTransaction::lookup_ifcs(std::string public_id, Ifcs& ifcs)
 {
   HSSCallInformation data;
-  bool success = get_data_from_hss(public_id, data, trail);
+  bool success = get_data_from_hss(public_id, data);
   if (success)
   {
     ifcs = data.ifcs;
@@ -1851,8 +1843,7 @@ bool UASTransaction::lookup_ifcs(std::string public_id, Ifcs& ifcs, SAS::TrailId
 void UASTransaction::proxy_calculate_targets(pjsip_msg* msg,
                                              pj_pool_t* pool,
                                              TargetList& targets,
-                                             int max_targets,
-                                             SAS::TrailId trail)
+                                             int max_targets)
 {
   bool sip_uri = false;
   bool tel_uri = false;
@@ -1912,7 +1903,7 @@ void UASTransaction::proxy_calculate_targets(pjsip_msg* msg,
         domain = PJUtils::pj_str_to_string(&((pjsip_sip_uri*)req_uri)->host);
       }
 
-      std::vector<std::string> bgcf_route = bgcf_service->get_route(domain, trail);
+      std::vector<std::string> bgcf_route = bgcf_service->get_route(domain);
 
       if (!bgcf_route.empty())
       {
@@ -1939,8 +1930,7 @@ void UASTransaction::proxy_calculate_targets(pjsip_msg* msg,
 
         // We have added a BGCF generated route to the request, so we should
         // switch ACR context for the downstream leg.
-        _bgcf_acr = bgcf_acr_factory->get_acr(trail,
-                                              CALLING_PARTY,
+        _bgcf_acr = bgcf_acr_factory->get_acr(CALLING_PARTY,
                                               acr_node_role(msg));
 
         if ((_downstream_acr != _upstream_acr) &&
@@ -1982,7 +1972,7 @@ void UASTransaction::proxy_calculate_targets(pjsip_msg* msg,
     // Determine the canonical public ID, and look up the set of associated
     // URIs on the HSS.
     std::vector<std::string> uris;
-    bool success = get_associated_uris(public_id, uris, trail);
+    bool success = get_associated_uris(public_id, uris);
 
     std::string aor;
     if (success && (uris.size() > 0))
@@ -2005,8 +1995,7 @@ void UASTransaction::proxy_calculate_targets(pjsip_msg* msg,
                            msg,
                            pool,
                            max_targets,
-                           targets,
-                           trail);
+                           targets);
     if (targets.empty())
     {
       LOG_ERROR("Failed to find any valid bindings for %s in registration store", aor.c_str());
@@ -2021,30 +2010,26 @@ void UASTransaction::get_targets_from_store(const std::string& aor,
                                             pjsip_msg*& msg,
                                             pj_pool_t* pool,
                                             int max_targets,
-                                            TargetList& targets,
-                                            SAS::TrailId trail)
+                                            TargetList& targets)
 {
   RegStore::AoR* aor_data = NULL;
   get_all_bindings(aor,
                    store,
                    remote_store,
-                   &aor_data,
-                   trail);
+                   &aor_data);
   filter_bindings_to_targets(aor,
                              aor_data,
                              msg,
                              pool,
                              max_targets,
-                             targets,
-                             trail);
+                             targets);
   delete aor_data; aor_data = NULL;
 }
 
 void UASTransaction::get_all_bindings(const std::string& aor,
                                       RegStore*& store,
                                       RegStore*& remote_store,
-                                      RegStore::AoR** aor_data,
-                                      SAS::TrailId trail)
+                                      RegStore::AoR** aor_data)
 {
   // Look up the target in the registration data store.
   LOG_INFO("Look up targets in registration store: %s", aor.c_str());
@@ -2064,7 +2049,7 @@ void UASTransaction::get_all_bindings(const std::string& aor,
 }
 
 /// Attempt ENUM lookup if appropriate.
-static pj_status_t translate_request_uri(pjsip_tx_data* tdata, SAS::TrailId trail)
+static pj_status_t translate_request_uri(pjsip_tx_data* tdata)
 {
   pj_status_t status = PJ_SUCCESS;
   std::string user;
@@ -2090,7 +2075,7 @@ static pj_status_t translate_request_uri(pjsip_tx_data* tdata, SAS::TrailId trai
         (!user_phone && PJUtils::is_user_numeric(user)))
     {
       LOG_DEBUG("Performing ENUM lookup for user %s", user.c_str());
-      uri = enum_service->lookup_uri_from_user(user, trail);
+      uri = enum_service->lookup_uri_from_user(user);
     }
   }
   else if (PJUtils::is_uri_phone_number(tdata->msg->line.req.uri))
@@ -2558,7 +2543,7 @@ void UASTransaction::routing_proxy_handle_initial_non_cancel(const ServingState&
           // this domain, so we need to recheck this below before
           // starting terminating handling.
           LOG_DEBUG("Translating URI");
-          status = translate_request_uri(_req, trail());
+          status = translate_request_uri(_req);
 
           if (status != PJ_SUCCESS)
           {
@@ -2619,8 +2604,7 @@ void UASTransaction::routing_proxy_handle_initial_non_cancel(const ServingState&
       _upstream_acr->tx_request(_req->msg);
 
       // Allocate an I-CSCF ACR.
-      _icscf_acr = icscf_acr_factory->get_acr(trail(),
-                                              CALLING_PARTY,
+      _icscf_acr = icscf_acr_factory->get_acr(CALLING_PARTY,
                                               acr_node_role(_req->msg));
       _icscf_acr->rx_request(_req->msg);
 
@@ -2628,7 +2612,6 @@ void UASTransaction::routing_proxy_handle_initial_non_cancel(const ServingState&
       std::string public_id = PJUtils::aor_from_uri((pjsip_sip_uri*)_req->msg->line.req.uri);
       _icscf_router = (ICSCFRouter*)new ICSCFLIRouter(hss,
                                                       scscf_selector,
-                                                      trail(),
                                                       _icscf_acr,
                                                       public_id,
                                                       false);
@@ -2850,7 +2833,7 @@ bool UASTransaction::find_as_chain(const ServingState& serving_state)
 
       served_user = _as_chain_links.back().served_user();
 
-      success = lookup_ifcs(served_user, ifcs, trail());
+      success = lookup_ifcs(served_user, ifcs);
       if (success)
       {
         LOG_DEBUG("Creating originating CDIV AS chain");
@@ -2870,7 +2853,7 @@ bool UASTransaction::find_as_chain(const ServingState& serving_state)
     if (!served_user.empty())
     {
       LOG_DEBUG("Looking up iFCs for %s for new AS chain", served_user.c_str());
-      success = lookup_ifcs(served_user, ifcs, trail());
+      success = lookup_ifcs(served_user, ifcs);
       if (success)
       {
         LOG_DEBUG("Successfully looked up iFCs");
@@ -2961,7 +2944,7 @@ bool UASTransaction::move_to_terminating_chain()
   if (!served_user.empty())
   {
     Ifcs ifcs;
-    success = lookup_ifcs(served_user, ifcs, trail());
+    success = lookup_ifcs(served_user, ifcs);
 
     if (success)
     {
@@ -2970,8 +2953,7 @@ bool UASTransaction::move_to_terminating_chain()
       // then creating a new downstream ACR for the terminating side and passing
       // the request to it as if it has been received.
       _upstream_acr->tx_request(_req->msg);
-      _downstream_acr = cscf_acr_factory->get_acr(trail(),
-                                                  CALLING_PARTY,
+      _downstream_acr = cscf_acr_factory->get_acr(CALLING_PARTY,
                                                   acr_node_role(_req->msg));
       _downstream_acr->rx_request(_req->msg);
 
@@ -3161,7 +3143,7 @@ void UASTransaction::handle_outgoing_non_cancel(Target* target)
   else
   {
     // Find targets.
-    proxy_calculate_targets(_req->msg, _req->pool, targets, MAX_FORKING, trail());
+    proxy_calculate_targets(_req->msg, _req->pool, targets, MAX_FORKING);
   }
 
   if (targets.size() == 0)
@@ -3693,7 +3675,7 @@ void UASTransaction::log_on_tsx_start(const pjsip_rx_data* rdata)
   SAS::Marker start_marker(trail(), MARKER_ID_START, 1u);
   SAS::report_marker(start_marker);
 
-  PJUtils::report_sas_to_from_markers(trail(), rdata->msg_info.msg);
+  PJUtils::report_sas_to_from_markers(rdata->msg_info.msg);
 
   if ((rdata->msg_info.msg->line.req.method.id == PJSIP_REGISTER_METHOD) ||
       ((pjsip_method_cmp(&rdata->msg_info.msg->line.req.method, pjsip_get_subscribe_method())) == 0) ||
@@ -3701,11 +3683,11 @@ void UASTransaction::log_on_tsx_start(const pjsip_rx_data* rdata)
   {
     // Omit the Call-ID for these requests, as the same Call-ID can be
     // reused over a long period of time and produce huge SAS trails.
-    PJUtils::mark_sas_call_branch_ids(get_trail(rdata), NULL, rdata->msg_info.msg);
+    PJUtils::mark_sas_call_branch_ids(NULL, rdata->msg_info.msg);
   }
   else
   {
-    PJUtils::mark_sas_call_branch_ids(get_trail(rdata), _analytics.cid, rdata->msg_info.msg);
+    PJUtils::mark_sas_call_branch_ids(_analytics.cid, rdata->msg_info.msg);
   }
 }
 
@@ -4253,7 +4235,7 @@ void UACTransaction::set_target(const struct Target& target)
   {
     // Resolve the next hop destination for this request to a set of servers.
     LOG_DEBUG("Resolve next hop destination");
-    PJUtils::resolve_next_hop(_tdata, 0, _servers, trail());
+    PJUtils::resolve_next_hop(_tdata, 0, _servers);
   }
 
   exit_context();
@@ -5030,7 +5012,6 @@ AsChainLink UASTransaction::create_as_chain(const SessionCase& session_case,
                                                  session_case,
                                                  served_user,
                                                  is_registered,
-                                                 trail(),
                                                  ifcs,
                                                  acr);
   LOG_DEBUG("UASTransaction %p linked to AsChain %s", this, ret.to_string().c_str());

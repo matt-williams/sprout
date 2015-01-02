@@ -208,9 +208,9 @@ private:
   AsChainLink::Disposition apply_services(Target*& target);
   void handle_outgoing_non_cancel(Target* target);
 
-  bool get_data_from_hss(std::string public_id, HSSCallInformation& data, SAS::TrailId trail);
-  bool lookup_ifcs(std::string public_id, Ifcs& ifcs, SAS::TrailId trail);
-  bool get_associated_uris(std::string public_id, std::vector<std::string>& uris, SAS::TrailId trail);
+  bool get_data_from_hss(std::string public_id, HSSCallInformation& data);
+  bool lookup_ifcs(std::string public_id, Ifcs& ifcs);
+  bool get_associated_uris(std::string public_id, std::vector<std::string>& uris);
   bool is_user_registered(std::string public_id);
 
   void routing_proxy_record_route(const SessionCase& session_case);
@@ -218,21 +218,18 @@ private:
   void proxy_calculate_targets(pjsip_msg* msg,
                                pj_pool_t* pool,
                                TargetList& targets,
-                               int max_targets,
-                               SAS::TrailId trail);
+                               int max_targets);
   void get_targets_from_store(const std::string& aor,
                               RegStore*& store,
                               RegStore*& remote_store,
                               pjsip_msg*& msg,
                               pj_pool_t* pool,
                               int max_targets,
-                              TargetList& targets,
-                              SAS::TrailId trail);
+                              TargetList& targets);
   void get_all_bindings(const std::string& aor,
                         RegStore*& store,
                         RegStore*& remote_store,
-                        RegStore::AoR** aor_data,
-                        SAS::TrailId trail);
+                        RegStore::AoR** aor_data);
 
   void cancel_trying_timer();
 

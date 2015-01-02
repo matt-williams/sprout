@@ -81,7 +81,7 @@ public:
   void test(EnumService& enum_)
   {
     SCOPED_TRACE(_in);
-    string ret = enum_.lookup_uri_from_user(_in, 0);
+    string ret = enum_.lookup_uri_from_user(_in);
     EXPECT_EQ(_out, ret);
   }
 

@@ -52,7 +52,6 @@
 
 DNSResolver::DNSResolver(const struct IP46Address& server) :
                          _req_pending(false),
-                         _trail(0),
                          _domain(""),
                          _status(ARES_SUCCESS),
                          _naptr_reply(NULL)
@@ -106,14 +105,13 @@ void DNSResolver::destroy(DNSResolver* resolver)
 
 int DNSResolver::perform_naptr_query(const std::string& domain, struct ares_naptr_reply*& naptr_reply)
 {
-  send_naptr_query(domain, SASContext::trail());
+  send_naptr_query(domain);
   wait_for_response();
 
   // Save off the results...
   naptr_reply = _naptr_reply;
   int status = _status;
   // ...and then clear out our state.
-  _trail = 0;
   _domain = "";
   _naptr_reply = NULL;
   _status = ARES_SUCCESS;
@@ -129,13 +127,13 @@ void DNSResolver::free_naptr_reply(struct ares_naptr_reply* naptr_reply) const
 }
 
 
-void DNSResolver::send_naptr_query(const std::string& domain, SAS::TrailId trail)
+void DNSResolver::send_naptr_query(const std::string& domain)
 {
   // Log the query.
+  SAS::TrailId trail = SASContext::trail();
   SAS::Event event(trail, SASEvent::TX_ENUM_REQ, 0);
   event.add_var_param(domain);
   SAS::report_event(event);
-  _trail = trail;
   _domain = domain;
 
   // Send the query.
@@ -230,11 +228,15 @@ void DNSResolver::ares_callback(int status,
                                 unsigned char* abuf,
                                 int alen)
 {
+  // This callback is always invoked on the same thread as the request, so we
+  // can retrieve the trail from the thread-local context.
+  SAS::TrailId trail = SASContext::trail();
+
   _status = status;
   if (status == ARES_SUCCESS)
   {
     // Log that we've succeeded.
-    SAS::Event event(_trail, SASEvent::RX_ENUM_RSP, 0);
+    SAS::Event event(trail, SASEvent::RX_ENUM_RSP, 0);
     event.add_var_param(_domain);
     event.add_var_param(alen, abuf);
     SAS::report_event(event);
@@ -250,7 +252,7 @@ void DNSResolver::ares_callback(int status,
   {
     // Log that we've failed.
     LOG_WARNING("DNS ENUM query failed for host %s: %s", _domain.c_str(), ares_strerror(status));
-    SAS::Event event(_trail, SASEvent::RX_ENUM_ERR, 0);
+    SAS::Event event(trail, SASEvent::RX_ENUM_ERR, 0);
     event.add_static_param(status);
     event.add_var_param(_domain);
     SAS::report_event(event);

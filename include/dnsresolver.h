@@ -68,7 +68,7 @@ public:
 
 private:
   // Send a query for the specified domain.
-  void send_naptr_query(const std::string& domain, SAS::TrailId trail);
+  void send_naptr_query(const std::string& domain);
   // Wait for a response to the query.
   void wait_for_response();
   // ares callback function - static, wrapping the member function below.
@@ -87,9 +87,6 @@ private:
   ares_channel _channel;
   // Whether a request is pending.
   bool _req_pending;
-  // While a request is outstanding, the trail to log to.  When no request is
-  // outstanding, 0.
-  SAS::TrailId _trail;
   // While a request is outstanding, the domain that was queried (used for
   // logging).  When no request is outstanding, the empty string.
   std::string _domain;
