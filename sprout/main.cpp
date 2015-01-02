@@ -1467,10 +1467,13 @@ int main(int argc, char* argv[])
         // Use remote memcached store too.
         LOG_STATUS("Using remote memcached compatible store with ASCII protocol");
 
+        // Use a 100ms connection timeout for the remote store,
+        // instead of the 50ms default.
         remote_data_store = (Store*)new MemcachedStore(false, 
                                                        opt.remote_store_servers,
                                                        memcached_remote_comm_monitor,
-                                                       remote_vbucket_alarm);
+                                                       remote_vbucket_alarm,
+                                                       100);
 
         if (!(((MemcachedStore*)remote_data_store)->has_servers()))
         {
