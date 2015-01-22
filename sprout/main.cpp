@@ -1472,8 +1472,10 @@ int main(int argc, char* argv[])
         remote_data_store = (Store*)new MemcachedStore(false, 
                                                        opt.remote_store_servers,
                                                        memcached_remote_comm_monitor,
-                                                       remote_vbucket_alarm,
-                                                       100);
+                                                       remote_vbucket_alarm);
+
+        
+        ((MemcachedStore*)remote_data_store)->set_max_connect_latency(100);
 
         if (!(((MemcachedStore*)remote_data_store)->has_servers()))
         {
