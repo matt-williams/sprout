@@ -9,6 +9,7 @@ TARGET := matrix-gateway.so
 
 TARGET_SOURCES := matrix.cpp \
                   matrixconnection.cpp \
+                  matrixhandlers.cpp \
                   matrixplugin.cpp
 
 CPPFLAGS += -Wno-write-strings \

@@ -45,6 +45,9 @@
 
 #include "json_parse_utils.h"
 
+const std::string MatrixConnection::EVENT_TYPE_CALL_INVITE = "m.call.invite";
+const std::string MatrixConnection::EVENT_TYPE_CALL_CANDIDATES = "m.call.candidates";
+
 MatrixConnection::MatrixConnection(const std::string& home_server,
                                    const std::string& as_token,
                                    HttpResolver* resolver,
@@ -83,7 +86,7 @@ std::string MatrixConnection::build_register_as_req(const std::string &url,
       writer.String("users");
       writer.StartArray();
       {
-        for (auto user_regex = user_regexs.begin(); user_regex != user_regexs.end(); user_regex++)
+        for (auto user_regex = user_regexs.begin(); user_regex != user_regexs.end(); ++user_regex)
         {
           writer.StartObject();
           {
@@ -101,7 +104,7 @@ std::string MatrixConnection::build_register_as_req(const std::string &url,
       writer.String("aliases");
       writer.StartArray();
       {
-        for (auto alias_regex = alias_regexs.begin(); alias_regex != alias_regexs.end(); alias_regex++)
+        for (auto alias_regex = alias_regexs.begin(); alias_regex != alias_regexs.end(); ++alias_regex)
         {
           writer.StartObject();
           {
@@ -119,7 +122,7 @@ std::string MatrixConnection::build_register_as_req(const std::string &url,
       writer.String("rooms");
       writer.StartArray();
       {
-        for (auto room_regex = room_regexs.begin(); room_regex != room_regexs.end(); room_regex++)
+        for (auto room_regex = room_regexs.begin(); room_regex != room_regexs.end(); ++room_regex)
         {
           writer.StartObject();
           {
@@ -206,14 +209,15 @@ std::string MatrixConnection::build_register_user_req(const std::string &userpar
   return sb.GetString();
 }
 
-HTTPCode MatrixConnection::register_user(const std::string& userpart)
+HTTPCode MatrixConnection::register_user(const std::string& userpart,
+                                         const SAS::TrailId trail)
 {
   std::string path = "/_matrix/client/api/v1/register?access_token=" + _as_token;
   std::map<std::string,std::string> headers;
   std::string response;
   std::string body = build_register_user_req(userpart);
 
-  HTTPCode rc = _http.send_post(path, headers, response, body, 0);
+  HTTPCode rc = _http.send_post(path, headers, response, body, trail);
 
   // TODO Parse response
 
@@ -245,7 +249,7 @@ std::string MatrixConnection::build_create_room_req(const std::string& name,
     writer.String("invite");
     writer.StartArray();
     {
-      for (auto invite = invites.begin(); invite != invites.end(); invite++)
+      for (auto invite = invites.begin(); invite != invites.end(); ++invite)
       {
         writer.String((*invite).c_str());
       }
@@ -294,6 +298,7 @@ HTTPCode MatrixConnection::create_room(const std::string& user,
                                        const std::string& alias,
                                        const std::vector<std::string>& invites,
                                        std::string& id,
+                                       const SAS::TrailId trail,
                                        bool is_public,
                                        const std::string& topic)
 {
@@ -302,7 +307,7 @@ HTTPCode MatrixConnection::create_room(const std::string& user,
   std::string response;
   std::string body = build_create_room_req(name, alias, invites, is_public, topic);
 
-  HTTPCode rc = _http.send_post(path, headers, response, body, 0);
+  HTTPCode rc = _http.send_post(path, headers, response, body, trail);
 
   if (rc == HTTP_OK)
   {
@@ -391,12 +396,13 @@ std::string MatrixConnection::build_call_candidates_event(const std::string& cal
 HTTPCode MatrixConnection::send_event(const std::string& user,
                                       const std::string& room,
                                       const std::string& event_type,
-                                      const std::string& event_body)
+                                      const std::string& event_body,
+                                      const SAS::TrailId trail)
 {
   std::string path = "/_matrix/client/api/v1/rooms/" + room + "/send/" + event_type + "?access_token=" + _as_token + "&user_id=" + user;
   std::map<std::string,std::string> headers;
 
-  HTTPCode rc = _http.send_post(path, headers, event_body, 0);
+  HTTPCode rc = _http.send_post(path, headers, event_body, trail);
 
   // TODO Parse response
 

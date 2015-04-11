@@ -1622,6 +1622,7 @@ int main(int argc, char* argv[])
     }
   }
 
+  HttpStack* http_stack;
   if (opt.scscf_enabled)
   {
     scscf_acr_factory = (ralf_connection != NULL) ?
@@ -1703,6 +1704,28 @@ int main(int argc, char* argv[])
                                       serializer,
                                       deserializers,
                                       chronos_connection);
+    }
+
+    // Start the HTTP stack early as modules might need to register with it.
+    http_stack = HttpStack::get_instance();
+    HttpStackUtils::PingHandler ping_handler;
+    try
+    {
+      http_stack->initialize();
+      http_stack->configure(opt.http_address,
+                            opt.http_port,
+                            opt.http_threads,
+                            exception_handler,
+                            access_logger);
+      http_stack->register_handler("^/ping$",
+                                   &ping_handler);
+    }
+    catch (HttpStack::Exception& e)
+    {
+      CL_SPROUT_HTTP_INTERFACE_FAIL.log(e._func, e._rc);
+      closelog();
+      LOG_ERROR("Caught HttpStack::Exception - %s - %d\n", e._func, e._rc);
+      return 1;
     }
 
     if (opt.auth_enabled)
@@ -1837,11 +1860,8 @@ int main(int argc, char* argv[])
     return 1;
   }
 
-  HttpStack* http_stack = NULL;
   if (opt.scscf_enabled)
   {
-    http_stack = HttpStack::get_instance();
-
     RegistrationTimeoutTask::Config reg_timeout_config(local_reg_store, remote_reg_store, hss_connection);
     AuthTimeoutTask::Config auth_timeout_config(av_store, hss_connection);
     DeregistrationTask::Config deregistration_config(local_reg_store, remote_reg_store, hss_connection, sip_resolver);
@@ -1851,18 +1871,9 @@ int main(int argc, char* argv[])
     ChronosHandler<RegistrationTimeoutTask, RegistrationTimeoutTask::Config> reg_timeout_handler(&reg_timeout_config);
     ChronosHandler<AuthTimeoutTask, AuthTimeoutTask::Config> auth_timeout_handler(&auth_timeout_config);
     HttpStackUtils::SpawningHandler<DeregistrationTask, DeregistrationTask::Config> deregistration_handler(&deregistration_config);
-    HttpStackUtils::PingHandler ping_handler;
 
     try
     {
-      http_stack->initialize();
-      http_stack->configure(opt.http_address,
-                            opt.http_port,
-                            opt.http_threads,
-                            exception_handler,
-                            access_logger);
-      http_stack->register_handler("^/ping$",
-                                   &ping_handler);
       http_stack->register_handler("^/timers$",
                                    &reg_timeout_handler);
       http_stack->register_handler("^/authentication-timeout$",

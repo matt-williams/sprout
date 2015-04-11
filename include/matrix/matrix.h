@@ -52,6 +52,7 @@ extern "C" {
 #include "pjutils.h"
 #include "stack.h"
 #include "sproutlet.h"
+#include "matrixhandlers.h"
 #include "matrixconnection.h"
 
 class MatrixTsx;
@@ -64,6 +65,7 @@ public:
   Matrix(const std::string& home_server,
          const std::string& as_token,
          HttpResolver* resolver,
+         const std::string local_http,
          LoadMonitor *load_monitor,
          LastValueCache* stats_aggregator);
 
@@ -76,6 +78,8 @@ public:
                         pjsip_msg* req);
 
 private:
+  std::string _home_server;
+  MatrixTransactionHandler _transaction_handler;
   MatrixConnection _connection;
 };
 
@@ -88,8 +92,11 @@ public:
   class Config
   {
   public:
-    Config() {}
+    Config(std::string _home_server, MatrixConnection* _connection) :
+      home_server(_home_server), connection(_connection) {}
     ~Config() {}
+    const std::string home_server;
+    MatrixConnection* connection;
   };
 
   /// Constructor.
@@ -105,6 +112,11 @@ public:
   virtual void on_rx_in_dialog_request(pjsip_msg* req);
 
 private:
+  std::string ims_uri_to_matrix_user(pjsip_uri* uri);
+  std::string matrix_uri_to_matrix_user(pjsip_uri* uri);
+  std::string matrix_user_to_userpart(std::string user);
+  void parse_sdp(const std::string& body, std::string& sdp, std::vector<std::string>& candidates);
+
   /// The config object for this transaction.
   Config _config;
 };

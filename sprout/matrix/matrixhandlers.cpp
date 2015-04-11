@@ -1,13 +1,8 @@
 /**
- * @file matrixplugin.cpp Plug-in wrapper for the matrix sproutlet.
+ * @file matrixhandlers.cpp HttpStack handlers for Matrix
  *
- * Project Clearwater - IMS in the Cloud
- * Copyright (C) 2014  Metaswitch Networks Ltd
- *
- * Parts of this module were derived from GPL licensed PJSIP sample code
- * with the following copyrights.
- *   Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
- *   Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>
+ * Project Clearwater - IMS in the cloud.
+ * Copyright (C) 2015  Metaswitch Networks Ltd
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -39,58 +34,40 @@
  * as those licenses appear in the file LICENSE-OPENSSL.
  */
 
-#include "cfgoptions.h"
-#include "stack.h"
-#include "sproutletplugin.h"
-#include "matrix.h"
+#include "matrixhandlers.h"
+#include "httpconnection.h"
+#include "json_parse_utils.h"
 
-class MatrixPlugin : public SproutletPlugin
+//
+// MatrixTransactionHandler methods.
+//
+void MatrixTransactionHandler::process_request(HttpStack::Request& req,
+                                               SAS::TrailId trail)
 {
-public:
-  MatrixPlugin();
-  ~MatrixPlugin();
+  HTTPCode rc = HTTP_OK;
 
-  bool load(struct options& opt, std::list<Sproutlet*>& sproutlets);
-  void unload();
+  rapidjson::Document doc;
+  doc.Parse<0>(req.get_rx_body().c_str());
 
-private:
-  Matrix* _matrix;
-};
+  if (!doc.HasParseError())
+  {
+    JSON_ASSERT_CONTAINS(doc, "events");
+    JSON_ASSERT_ARRAY(doc["events"]);
+    for (auto events = doc["events"].Begin();
+         events != doc["events"].End();
+         ++events)
+    {
+      JSON_ASSERT_CONTAINS(*events, "type");
+      JSON_ASSERT_STRING((*events)["type"]);
+      std::string type = (*events)["type"].GetString();
+      LOG_ERROR("Got event of type %s", type.c_str());
+    }
+  }
+  else
+  {
+    LOG_INFO("Failed to parse Matrix-supplied JSON body: %s", req.get_rx_body().c_str());
+    rc = HTTP_SERVER_ERROR;
+  }
 
-/// Export the plug-in using the magic symbol "sproutlet_plugin"
-extern "C" {
-MatrixPlugin sproutlet_plugin;
-}
-
-MatrixPlugin::MatrixPlugin() :
-  _matrix(NULL)
-{
-}
-
-MatrixPlugin::~MatrixPlugin()
-{
-}
-
-/// Loads the matrix plug-in, returning the supported Sproutlets.
-bool MatrixPlugin::load(struct options& opt, std::list<Sproutlet*>& sproutlets)
-{
-  bool plugin_loaded = true;
-
-  // Create the Sproutlet.
-  _matrix = new Matrix(opt.matrix_home_server,
-                       opt.matrix_as_token,
-                       http_resolver,
-                       opt.http_address + ":" + std::to_string(opt.http_port),
-                       load_monitor,
-                       stack_data.stats_aggregator);
-
-  sproutlets.push_back(_matrix);
-
-  return plugin_loaded;
-}
-
-/// Unloads the matrix plug-in.
-void MatrixPlugin::unload()
-{
-  delete _matrix;
+  req.send_reply(rc, trail);
 }

@@ -266,7 +266,7 @@ get_daemon_args()
         fi
 
         [ "$additional_home_domains" = "" ] || DAEMON_ARGS="$DAEMON_ARGS --additional-domains=$additional_home_domains"
-        [ "$matrix_home_server" = ""]       || DAEMON_ARGS="$DAEMON_ARGS --matrix-home-server=$matrix_home_server:8008"
+        [ "$matrix_home_server" = "" ]      || DAEMON_ARGS="$DAEMON_ARGS --matrix-home-server=$matrix_home_server"
         [ "$matrix_as_token" = "" ]         || DAEMON_ARGS="$DAEMON_ARGS --matrix-as-token=$matrix_as_token"
 }
 

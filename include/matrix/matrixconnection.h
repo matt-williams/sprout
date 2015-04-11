@@ -57,6 +57,9 @@ extern "C" {
 class MatrixConnection
 {
 public:
+  static const std::string EVENT_TYPE_CALL_INVITE;
+  static const std::string EVENT_TYPE_CALL_CANDIDATES;
+
   MatrixConnection(const std::string& home_server,
                    const std::string& as_token,
                    HttpResolver* resolver,
@@ -69,12 +72,14 @@ public:
                        const std::vector<std::string>& alias_regexs,
                        const std::vector<std::string>& room_regexs,
                        std::string& hs_token);
-  HTTPCode register_user(const std::string& userpart);
+  HTTPCode register_user(const std::string& userpart,
+                         const SAS::TrailId trail = 0);
   HTTPCode create_room(const std::string& user,
                        const std::string& name,
                        const std::string& alias,
                        const std::vector<std::string>& invites,
                        std::string& id,
+                       const SAS::TrailId trail = 0,
                        bool is_public = false,
                        const std::string& topic = "");
   std::string build_call_invite_event(const std::string& call_id,
@@ -85,7 +90,8 @@ public:
   HTTPCode send_event(const std::string& user,
                       const std::string& room,
                       const std::string& event_type,
-                      const std::string& event_body);
+                      const std::string& event_body,
+                      const SAS::TrailId trail = 0);
 
 private:
   std::string build_register_as_req(const std::string& url,

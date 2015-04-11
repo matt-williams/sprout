@@ -1,13 +1,8 @@
 /**
- * @file matrixplugin.cpp Plug-in wrapper for the matrix sproutlet.
+ * @file matrixhandlers.h HttpStack handlers for Matrix
  *
- * Project Clearwater - IMS in the Cloud
- * Copyright (C) 2014  Metaswitch Networks Ltd
- *
- * Parts of this module were derived from GPL licensed PJSIP sample code
- * with the following copyrights.
- *   Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
- *   Copyright (C) 2003-2008 Benny Prijono <benny@prijono.org>
+ * Project Clearwater - IMS in the cloud.
+ * Copyright (C) 2013  Metaswitch Networks Ltd
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -39,58 +34,18 @@
  * as those licenses appear in the file LICENSE-OPENSSL.
  */
 
-#include "cfgoptions.h"
-#include "stack.h"
-#include "sproutletplugin.h"
-#include "matrix.h"
+#ifndef MATRIXHANDLERS_H__
+#define MATRIXHANDLERS_H__
 
-class MatrixPlugin : public SproutletPlugin
+#include "httpstack.h"
+
+/// @class MatrixTransactionHandler
+///
+/// Handles Matrix transaction HTTP requests
+class MatrixTransactionHandler : public HttpStack::HandlerInterface
 {
-public:
-  MatrixPlugin();
-  ~MatrixPlugin();
-
-  bool load(struct options& opt, std::list<Sproutlet*>& sproutlets);
-  void unload();
-
-private:
-  Matrix* _matrix;
+  void process_request(HttpStack::Request& req, SAS::TrailId trail);
 };
 
-/// Export the plug-in using the magic symbol "sproutlet_plugin"
-extern "C" {
-MatrixPlugin sproutlet_plugin;
-}
+#endif
 
-MatrixPlugin::MatrixPlugin() :
-  _matrix(NULL)
-{
-}
-
-MatrixPlugin::~MatrixPlugin()
-{
-}
-
-/// Loads the matrix plug-in, returning the supported Sproutlets.
-bool MatrixPlugin::load(struct options& opt, std::list<Sproutlet*>& sproutlets)
-{
-  bool plugin_loaded = true;
-
-  // Create the Sproutlet.
-  _matrix = new Matrix(opt.matrix_home_server,
-                       opt.matrix_as_token,
-                       http_resolver,
-                       opt.http_address + ":" + std::to_string(opt.http_port),
-                       load_monitor,
-                       stack_data.stats_aggregator);
-
-  sproutlets.push_back(_matrix);
-
-  return plugin_loaded;
-}
-
-/// Unloads the matrix plug-in.
-void MatrixPlugin::unload()
-{
-  delete _matrix;
-}
