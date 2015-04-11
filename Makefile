@@ -23,6 +23,7 @@ DEB_NAMES += gemini-as gemini-as-dbg
 DEB_NAMES += memento-as memento-as-dbg
 DEB_NAMES += call-diversion-as call-diversion-as-dbg
 DEB_NAMES += mangelwurzel-as mangelwurzel-as-dbg
+DEB_NAMES += matrix-gateway matrix-gateway-dbg
 DEB_NAMES += bono bono-dbg restund
 DEB_NAMES += clearwater-sip-stress clearwater-sip-stress-dbg clearwater-sip-stress-stats
 

@@ -119,7 +119,8 @@ enum OptionTypes
   OPT_MIN_TOKEN_RATE,
   OPT_CASS_TARGET_LATENCY_US,
   OPT_EXCEPTION_MAX_TTL,
-  OPT_MAX_SESSION_EXPIRES
+  OPT_MAX_SESSION_EXPIRES,
+  OPT_MATRIX_HOME_SERVER
 };
 
 
@@ -182,6 +183,7 @@ const static struct pj_getopt_option long_opt[] =
   { "min-token-rate",               required_argument, 0, OPT_MIN_TOKEN_RATE},
   { "cass-target-latency-us",       required_argument, 0, OPT_CASS_TARGET_LATENCY_US},
   { "exception-max-ttl",            required_argument, 0, OPT_EXCEPTION_MAX_TTL},
+  { "matrix-home-server",            required_argument, 0, OPT_MATRIX_HOME_SERVER},
   { NULL,                           0,                 0, 0}
 };
 
@@ -316,6 +318,8 @@ static void usage(void)
        "     --exception-max-ttl <secs>\n"
        "                            The maximum time before the process exits if it hits an exception.\n"
        "                            The actual time is randomised.\n"
+       "     --matrix-home-server <server-name>\n"
+       "                            The name of the Matrix (http://matrix.org/) home server to gateway to.\n"
        " -F, --log-file <directory>\n"
        "                            Log to file in specified directory\n"
        " -L, --log-level N          Set log level to N (default: 4)\n"
@@ -863,6 +867,12 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
                options->exception_max_ttl);
       break;
 
+    case OPT_MATRIX_HOME_SERVER:
+      options->matrix_home_server = std::string(pj_optarg);
+      LOG_INFO("Matrix home server set to %s",
+               options->matrix_home_server.c_str());
+      break;
+
     case 'h':
       usage();
       return -1;
@@ -1189,6 +1199,7 @@ int main(int argc, char* argv[])
   opt.memcached_write_format = MemcachedWriteFormat::JSON;
   opt.override_npdi = PJ_FALSE;
   opt.exception_max_ttl = 600;
+  opt.matrix_home_server = "";
 
   boost::filesystem::path p = argv[0];
   // Copy the filename to a string so that we can be sure of its lifespan -

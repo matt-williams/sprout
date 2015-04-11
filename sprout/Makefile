@@ -11,6 +11,7 @@ all:
 	${MAKE} -f memento_as.mk
 	${MAKE} -f cdiv_as.mk
 	${MAKE} -f mangelwurzel/mangelwurzel_as.mk
+	${MAKE} -f matrix/matrix-gateway.mk
 
 .PHONY: test run_test coverage coverage-check coverage_raw debug vg vg-check vg_raw
 test run_test coverage coverage-check coverage_raw debug vg vg-check vg_raw:
@@ -27,4 +28,5 @@ clean:
 	${MAKE} -f memento_as.mk clean
 	${MAKE} -f cdiv_as.mk clean
 	${MAKE} -f mangelwurzel/mangelwurzel_as.mk clean
+	${MAKE} -f matrix/matrix-gateway.mk clean
 	${MAKE} -f sprout_test.mk clean

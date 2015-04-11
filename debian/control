@@ -155,6 +155,19 @@ Priority: extra
 Depends: mangelwurzel-as (= ${binary:Version})
 Description: Debugging symbols for mangelwurzel, the B2BUA and SCC-AS emulator
 
+Package: matrix-gateway
+Architecture: any
+Depends: sprout-base
+Suggests: matrix-gateway-dbg
+Description: Gateway to Matrix
+
+Package: matrix-gateway-dbg
+Architecture: any
+Section: debug
+Priority: extra
+Depends: matrix-gateway (= ${binary:Version})
+Description: Debugging symbols for matrix-gateway
+
 Package: bono
 Architecture: any
 Depends: clearwater-infrastructure, clearwater-tcp-scalability, clearwater-log-cleanup, sprout-libs, libboost-regex1.46.1, libboost-system1.46.1, libboost-thread1.46.1, libzmq3, clearwater-socket-factory, libboost-filesystem1.46.1

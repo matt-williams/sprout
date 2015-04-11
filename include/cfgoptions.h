@@ -129,6 +129,7 @@ struct options
   float                                min_token_rate;
   int                                  cass_target_latency_us;
   int                                  exception_max_ttl;
+  std::string                          matrix_home_server;
 };
 
 // Objects that must be shared with dynamically linked sproutlets must be
