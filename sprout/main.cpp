@@ -120,7 +120,8 @@ enum OptionTypes
   OPT_CASS_TARGET_LATENCY_US,
   OPT_EXCEPTION_MAX_TTL,
   OPT_MAX_SESSION_EXPIRES,
-  OPT_MATRIX_HOME_SERVER
+  OPT_MATRIX_HOME_SERVER,
+  OPT_MATRIX_AS_TOKEN
 };
 
 
@@ -183,7 +184,8 @@ const static struct pj_getopt_option long_opt[] =
   { "min-token-rate",               required_argument, 0, OPT_MIN_TOKEN_RATE},
   { "cass-target-latency-us",       required_argument, 0, OPT_CASS_TARGET_LATENCY_US},
   { "exception-max-ttl",            required_argument, 0, OPT_EXCEPTION_MAX_TTL},
-  { "matrix-home-server",            required_argument, 0, OPT_MATRIX_HOME_SERVER},
+  { "matrix-home-server",           required_argument, 0, OPT_MATRIX_HOME_SERVER},
+  { "matrix-as-token",              required_argument, 0, OPT_MATRIX_AS_TOKEN},
   { NULL,                           0,                 0, 0}
 };
 
@@ -320,6 +322,8 @@ static void usage(void)
        "                            The actual time is randomised.\n"
        "     --matrix-home-server <server-name>\n"
        "                            The name of the Matrix (http://matrix.org/) home server to gateway to.\n"
+       "     --matrix-as-token <token>\n"
+       "                            Authentication token to use to authenticate to the Matrix home server.\n"
        " -F, --log-file <directory>\n"
        "                            Log to file in specified directory\n"
        " -L, --log-level N          Set log level to N (default: 4)\n"
@@ -873,6 +877,12 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
                options->matrix_home_server.c_str());
       break;
 
+    case OPT_MATRIX_AS_TOKEN:
+      options->matrix_as_token = std::string(pj_optarg);
+      LOG_INFO("Matrix AS token set to %s",
+               options->matrix_as_token.c_str());
+      break;
+
     case 'h':
       usage();
       return -1;
@@ -1200,6 +1210,7 @@ int main(int argc, char* argv[])
   opt.override_npdi = PJ_FALSE;
   opt.exception_max_ttl = 600;
   opt.matrix_home_server = "";
+  opt.matrix_as_token = "";
 
   boost::filesystem::path p = argv[0];
   // Copy the filename to a string so that we can be sure of its lifespan -

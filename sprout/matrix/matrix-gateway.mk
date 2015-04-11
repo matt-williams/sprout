@@ -8,6 +8,7 @@ MK_DIR := ${ROOT}/mk
 TARGET := matrix-gateway.so
 
 TARGET_SOURCES := matrix.cpp \
+                  matrixconnection.cpp \
                   matrixplugin.cpp
 
 CPPFLAGS += -Wno-write-strings \

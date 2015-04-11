@@ -78,6 +78,7 @@ bool MatrixPlugin::load(struct options& opt, std::list<Sproutlet*>& sproutlets)
 
   // Create the Sproutlet.
   _matrix = new Matrix(opt.matrix_home_server,
+                       opt.matrix_as_token,
                        http_resolver,
                        load_monitor,
                        stack_data.stats_aggregator);

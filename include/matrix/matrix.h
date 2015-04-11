@@ -62,6 +62,7 @@ class Matrix : public Sproutlet
 public:
   /// Constructor.
   Matrix(const std::string& home_server,
+         const std::string& as_token,
          HttpResolver* resolver,
          LoadMonitor *load_monitor,
          LastValueCache* stats_aggregator);

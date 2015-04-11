@@ -43,17 +43,229 @@
 #include "constants.h"
 #include "matrixconnection.h"
 
+#include "json_parse_utils.h"
+
 MatrixConnection::MatrixConnection(const std::string& home_server,
+                                   const std::string& as_token,
                                    HttpResolver* resolver,
                                    LoadMonitor *load_monitor,
                                    LastValueCache* stats_aggregator) :
-  HttpConnection(home_server,
-                 false, 
-                 resolver,
-                 "connected_matrix_home_servers",
-                 load_monitor,
-                 stats_aggregator,
-                 SASEvent::HttpLogLevel::PROTOCOL,
-                 NULL)
+  _http(home_server,
+        false, 
+        resolver,
+        "connected_matrix_home_servers",
+        NULL, // load_monitor,
+        stats_aggregator,
+        SASEvent::HttpLogLevel::PROTOCOL,
+        NULL),
+  _as_token(as_token)
 {
 }
+
+std::string MatrixConnection::build_register_as_req(const std::string &url,
+                                                    const std::vector<std::string>& user_regexs,
+                                                    const std::vector<std::string>& alias_regexs,
+                                                    const std::vector<std::string>& room_regexs)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("url");
+    writer.String(url.c_str());
+    
+    writer.String("as_token");
+    writer.String(_as_token.c_str());
+
+    writer.String("namespaces");
+    writer.StartObject();
+    {
+      writer.String("users");
+      writer.StartArray();
+      {
+        for (auto user_regex = user_regexs.begin(); user_regex != user_regexs.end(); user_regex++)
+        {
+          writer.StartObject();
+          {
+            writer.String("exclusive");
+            writer.Bool(true);
+
+            writer.String("regex");
+            writer.String((*user_regex).c_str());
+          }
+          writer.EndObject();
+        }
+      }
+      writer.EndArray();
+
+      writer.String("aliases");
+      writer.StartArray();
+      {
+        for (auto alias_regex = alias_regexs.begin(); alias_regex != alias_regexs.end(); alias_regex++)
+        {
+          writer.StartObject();
+          {
+            writer.String("exclusive");
+            writer.Bool(true);
+
+            writer.String("regex");
+            writer.String((*alias_regex).c_str());
+          }
+          writer.EndObject();
+        }
+      }
+      writer.EndArray();
+
+      writer.String("rooms");
+      writer.StartArray();
+      {
+        for (auto room_regex = room_regexs.begin(); room_regex != room_regexs.end(); room_regex++)
+        {
+          writer.StartObject();
+          {
+            writer.String("exclusive");
+            writer.Bool(true);
+
+            writer.String("regex");
+            writer.String((*room_regex).c_str());
+          }
+          writer.EndObject();
+        }
+      }
+      writer.EndArray();
+    }
+    writer.EndObject();
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+HTTPCode MatrixConnection::parse_register_as_rsp(const std::string& response,
+                                                 std::string& hs_token)
+{
+  HTTPCode rc = HTTP_OK;
+
+  rapidjson::Document doc;
+  doc.Parse<0>(response.c_str());
+
+  if (!doc.HasParseError())
+  {
+    JSON_ASSERT_CONTAINS(doc, "hs_token");
+    JSON_ASSERT_STRING(doc["hs_token"]);
+    hs_token = doc["hs_token"].GetString();
+  }
+  else
+  {
+    LOG_INFO("Failed to parse Matrix-supplied JSON body: %s", response.c_str());
+    rc = HTTP_SERVER_ERROR;
+  }
+
+  return rc;
+}
+
+HTTPCode MatrixConnection::register_as(const std::string& url,
+                                       const std::vector<std::string>& user_regexs,
+                                       const std::vector<std::string>& alias_regexs,
+                                       const std::vector<std::string>& room_regexs,
+                                       std::string& hs_token)
+{
+  std::map<std::string,std::string> headers;
+  std::string response;
+  std::string body = build_register_as_req(url, user_regexs, alias_regexs, room_regexs);
+
+  HTTPCode rc = _http.send_post("/_matrix/appservice/v1/register", headers, response, body, 0);
+
+  if (rc == HTTP_OK)
+  {
+    rc = parse_register_as_rsp(response, hs_token);
+  }
+
+  return rc;
+}
+
+std::string MatrixConnection::build_call_invite_event(const std::string& call_id,
+                                                      const std::string& sdp,
+                                                      const int lifetime)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("version");
+    writer.Int(0);
+    
+    writer.String("call_id");
+    writer.String(call_id.c_str());
+
+    writer.String("offer");
+    writer.StartObject();
+    {
+      writer.String("type");
+      writer.String("offer");
+
+      writer.String("sdp");
+      writer.String(sdp.c_str());
+    }
+    writer.EndObject();
+
+    writer.String("lifetime");
+    writer.Int(lifetime);
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+std::string MatrixConnection::build_call_candidates_event(const std::string& call_id,
+                                                          const std::vector<std::string>& candidates)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("version");
+    writer.Int(0);
+    
+    writer.String("call_id");
+    writer.String(call_id.c_str());
+
+    writer.String("rooms");
+    writer.StartArray();
+    {
+      for (auto candidate = candidates.begin(); candidate != candidates.end(); candidate++)
+      {
+        writer.StartObject();
+        {
+          writer.String("sdpMid");
+          writer.String("video");
+
+          writer.String("sdpMLineIndex");
+          writer.Int(1);
+
+          writer.String("candidate");
+          writer.String((*candidate).c_str());
+        }
+        writer.EndObject();
+      }
+    }
+    writer.EndArray();
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+HTTPCode MatrixConnection::send_event(const std::string& user,
+                                      const std::string& room,
+                                      const std::string& event_type,
+                                      const std::string& event_body)
+{
+  std::string path = "/_matrix/client/api/v1/rooms/" + room + "/send/" + event_type + "?access_token=" + _as_token + "&user_id=" + user;
+  std::map<std::string,std::string> headers;
+
+  HTTPCode rc = _http.send_post(path, headers, event_body, 0);
+
+  return rc;
+}
+

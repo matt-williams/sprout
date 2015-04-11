@@ -130,6 +130,7 @@ struct options
   int                                  cass_target_latency_us;
   int                                  exception_max_ttl;
   std::string                          matrix_home_server;
+  std::string                          matrix_as_token;
 };
 
 // Objects that must be shared with dynamically linked sproutlets must be

@@ -54,14 +54,42 @@ extern "C" {
 #include "httpconnection.h"
 
 /// Definition of MatrixTsx class.
-class MatrixConnection : public HttpConnection
+class MatrixConnection
 {
 public:
   MatrixConnection(const std::string& home_server,
+                   const std::string& as_token,
                    HttpResolver* resolver,
                    LoadMonitor *load_monitor,
                    LastValueCache* stats_aggregator);
   virtual ~MatrixConnection() {};
+
+  HTTPCode register_as(const std::string& url,
+                       const std::vector<std::string>& user_regexs,
+                       const std::vector<std::string>& alias_regexs,
+                       const std::vector<std::string>& room_regexs,
+                       std::string& hs_token);
+
+  std::string build_call_invite_event(const std::string& call_id,
+                                      const std::string& sdp,
+                                      const int lifetime);
+  std::string build_call_candidates_event(const std::string& call_id,
+                                          const std::vector<std::string>& candidates);
+  HTTPCode send_event(const std::string& user,
+                      const std::string& room,
+                      const std::string& event_type,
+                      const std::string& event_body);
+
+private:
+  std::string build_register_as_req(const std::string &url,
+                                    const std::vector<std::string>& user_regexs,
+                                    const std::vector<std::string>& alias_regexs,
+                                    const std::vector<std::string>& room_regexs);
+  HTTPCode parse_register_as_rsp(const std::string& response,
+                                 std::string& hs_token);
+
+  HttpConnection _http;
+  std::string _as_token;
 };
 
 #endif
