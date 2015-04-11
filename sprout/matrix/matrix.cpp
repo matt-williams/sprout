@@ -59,6 +59,7 @@ Matrix::Matrix(const std::string& home_server,
   user_regexs.push_back("@tel_\\+?[0-9][0-9]*:.*");
   user_regexs.push_back("@sip_.*:.*");
   std::vector<std::string> alias_regexs;
+  alias_regexs.push_back("#call-.*:.*");
   std::vector<std::string> room_regexs;
   std::string hs_token;
   HTTPCode rc = _connection.register_as("http://127.0.0.1:11888", user_regexs, alias_regexs, room_regexs, hs_token);

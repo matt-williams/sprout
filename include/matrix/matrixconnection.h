@@ -69,7 +69,14 @@ public:
                        const std::vector<std::string>& alias_regexs,
                        const std::vector<std::string>& room_regexs,
                        std::string& hs_token);
-
+  HTTPCode register_user(const std::string& userpart);
+  HTTPCode create_room(const std::string& user,
+                       const std::string& name,
+                       const std::string& alias,
+                       const std::vector<std::string>& invites,
+                       std::string& id,
+                       bool is_public = false,
+                       const std::string& topic = "");
   std::string build_call_invite_event(const std::string& call_id,
                                       const std::string& sdp,
                                       const int lifetime);
@@ -81,12 +88,20 @@ public:
                       const std::string& event_body);
 
 private:
-  std::string build_register_as_req(const std::string &url,
+  std::string build_register_as_req(const std::string& url,
                                     const std::vector<std::string>& user_regexs,
                                     const std::vector<std::string>& alias_regexs,
                                     const std::vector<std::string>& room_regexs);
   HTTPCode parse_register_as_rsp(const std::string& response,
                                  std::string& hs_token);
+  std::string build_register_user_req(const std::string& userpart);
+  std::string build_create_room_req(const std::string& name,
+                                    const std::string& alias,
+                                    const std::vector<std::string>& invites,
+                                    const bool is_public = false,
+                                    const std::string& topic = "");
+  HTTPCode parse_create_room_rsp(const std::string& response,
+                                 std::string& id);
 
   HttpConnection _http;
   std::string _as_token;

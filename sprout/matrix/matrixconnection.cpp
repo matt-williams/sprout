@@ -50,7 +50,7 @@ MatrixConnection::MatrixConnection(const std::string& home_server,
                                    HttpResolver* resolver,
                                    LoadMonitor *load_monitor,
                                    LastValueCache* stats_aggregator) :
-  _http(home_server,
+  _http(home_server + ":8008",
         false, 
         resolver,
         "connected_matrix_home_servers",
@@ -180,6 +180,138 @@ HTTPCode MatrixConnection::register_as(const std::string& url,
   {
     rc = parse_register_as_rsp(response, hs_token);
   }
+  else
+  {
+    // TODO Parse error response
+  }
+
+  return rc;
+}
+
+std::string MatrixConnection::build_register_user_req(const std::string &userpart)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("type");
+    writer.String("m.login.application_service");
+
+    writer.String("user");
+    writer.String(userpart.c_str());
+
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+HTTPCode MatrixConnection::register_user(const std::string& userpart)
+{
+  std::string path = "/_matrix/client/api/v1/register?access_token=" + _as_token;
+  std::map<std::string,std::string> headers;
+  std::string response;
+  std::string body = build_register_user_req(userpart);
+
+  HTTPCode rc = _http.send_post(path, headers, response, body, 0);
+
+  // TODO Parse response
+
+  return rc;
+}
+
+std::string MatrixConnection::build_create_room_req(const std::string& name,
+                                                    const std::string& alias,
+                                                    const std::vector<std::string>& invites,
+                                                    const bool is_public,
+                                                    const std::string& topic)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    if (!name.empty())
+    {
+      writer.String("name");
+      writer.String(name.c_str());
+    }
+
+    if (!alias.empty())
+    {
+      writer.String("room_alias_name");
+      writer.String(alias.c_str());
+    }
+
+    writer.String("invite");
+    writer.StartArray();
+    {
+      for (auto invite = invites.begin(); invite != invites.end(); invite++)
+      {
+        writer.String((*invite).c_str());
+      }
+    }
+    writer.EndArray();
+
+    writer.String("visibility");
+    writer.String(is_public ? "public" : "private");
+
+    if (!topic.empty())
+    {
+      writer.String("topic");
+      writer.String(topic.c_str());
+    }
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+HTTPCode MatrixConnection::parse_create_room_rsp(const std::string& response,
+                                                 std::string& id)
+{
+  HTTPCode rc = HTTP_OK;
+
+  rapidjson::Document doc;
+  doc.Parse<0>(response.c_str());
+
+  if (!doc.HasParseError())
+  {
+    JSON_ASSERT_CONTAINS(doc, "room_id");
+    JSON_ASSERT_STRING(doc["room_id"]);
+    id = doc["room_id"].GetString();
+  }
+  else
+  {
+    LOG_INFO("Failed to parse Matrix-supplied JSON body: %s", response.c_str());
+    rc = HTTP_SERVER_ERROR;
+  }
+
+  return rc;
+}
+
+HTTPCode MatrixConnection::create_room(const std::string& user,
+                                       const std::string& name,
+                                       const std::string& alias,
+                                       const std::vector<std::string>& invites,
+                                       std::string& id,
+                                       bool is_public,
+                                       const std::string& topic)
+{
+  std::string path = "/_matrix/client/api/v1/createRoom?access_token=" + _as_token + "&user_id=" + user;
+  std::map<std::string,std::string> headers;
+  std::string response;
+  std::string body = build_create_room_req(name, alias, invites, is_public, topic);
+
+  HTTPCode rc = _http.send_post(path, headers, response, body, 0);
+
+  if (rc == HTTP_OK)
+  {
+    rc = parse_create_room_rsp(response, id);
+  }
+  else
+  {
+    // TODO Parse error response
+  }
 
   return rc;
 }
@@ -265,6 +397,8 @@ HTTPCode MatrixConnection::send_event(const std::string& user,
   std::map<std::string,std::string> headers;
 
   HTTPCode rc = _http.send_post(path, headers, event_body, 0);
+
+  // TODO Parse response
 
   return rc;
 }
