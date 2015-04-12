@@ -128,12 +128,15 @@ private:
   std::string matrix_uri_to_matrix_user(pjsip_uri* uri);
   std::string matrix_user_to_userpart(std::string user);
   void parse_sdp(const std::string& body, std::string& sdp, std::vector<std::string>& candidates);
+  pjsip_uri* get_from_uri(pjsip_msg* req);
+  void add_record_route(pjsip_msg* msg);
 
   /// The config object for this transaction.
   Config _config;
   TimerID _timer_request;
   TimerID _timer_now;
   std::string _call_id;
+  std::string _room_id;
   std::string _answer_sdp;
 };
 

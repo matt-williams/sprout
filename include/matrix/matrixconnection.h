@@ -59,6 +59,8 @@ class MatrixConnection
 public:
   static const std::string EVENT_TYPE_CALL_INVITE;
   static const std::string EVENT_TYPE_CALL_CANDIDATES;
+  static const std::string EVENT_TYPE_CALL_ANSWER;
+  static const std::string EVENT_TYPE_CALL_HANGUP;
 
   MatrixConnection(const std::string& home_server,
                    const std::string& as_token,
@@ -87,6 +89,9 @@ public:
                                       const int lifetime);
   std::string build_call_candidates_event(const std::string& call_id,
                                           const std::vector<std::string>& candidates);
+  std::string build_call_answer_event(const std::string& call_id,
+                                      const std::string& sdp);
+  std::string build_call_hangup_event(const std::string& call_id);
   HTTPCode send_event(const std::string& user,
                       const std::string& room,
                       const std::string& event_type,

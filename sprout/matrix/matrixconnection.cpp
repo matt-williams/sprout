@@ -47,6 +47,8 @@
 
 const std::string MatrixConnection::EVENT_TYPE_CALL_INVITE = "m.call.invite";
 const std::string MatrixConnection::EVENT_TYPE_CALL_CANDIDATES = "m.call.candidates";
+const std::string MatrixConnection::EVENT_TYPE_CALL_ANSWER = "m.call.answer";
+const std::string MatrixConnection::EVENT_TYPE_CALL_HANGUP = "m.call.hangup";
 
 MatrixConnection::MatrixConnection(const std::string& home_server,
                                    const std::string& as_token,
@@ -387,6 +389,52 @@ std::string MatrixConnection::build_call_candidates_event(const std::string& cal
       }
     }
     writer.EndArray();
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+std::string MatrixConnection::build_call_answer_event(const std::string& call_id,
+                                                      const std::string& sdp)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("version");
+    writer.Int(0);
+    
+    writer.String("call_id");
+    writer.String(call_id.c_str());
+
+    writer.String("answer");
+    writer.StartObject();
+    {
+      writer.String("type");
+      writer.String("answer");
+
+      writer.String("sdp");
+      writer.String(sdp.c_str());
+    }
+    writer.EndObject();
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+std::string MatrixConnection::build_call_hangup_event(const std::string& call_id)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("version");
+    writer.Int(0);
+    
+    writer.String("call_id");
+    writer.String(call_id.c_str());
   }
   writer.EndObject();
 

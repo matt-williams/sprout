@@ -189,6 +189,39 @@ void MatrixTsx::parse_sdp(const std::string& body,
   }
 }
 
+pjsip_uri* MatrixTsx::get_from_uri(pjsip_msg* req)
+{
+  // Find the calling party in the P-Asserted-Identity header.
+  pjsip_routing_hdr* asserted_id =
+    (pjsip_routing_hdr*)pjsip_msg_find_hdr_by_name(req,
+                                                   &STR_P_ASSERTED_IDENTITY,
+                                                   NULL);
+  if (asserted_id == NULL)
+  {
+    LOG_DEBUG("No P-Asserted-Identity");
+    return NULL;
+  }
+
+  return (pjsip_uri*)pjsip_uri_get_uri(&asserted_id->name_addr);
+}
+
+void MatrixTsx::add_record_route(pjsip_msg* msg)
+{
+  pj_pool_t* pool = get_pool(msg);
+
+  pjsip_param* param = PJ_POOL_ALLOC_T(pool, pjsip_param);
+  pj_strdup2(pool, &param->name, "room");
+  pj_strdup2(pool, &param->value, _room_id.c_str());
+
+  pjsip_sip_uri* uri = get_reflexive_uri(pool);
+  pj_list_insert_before(&uri->other_param, param);
+
+  pjsip_route_hdr* rr = pjsip_rr_hdr_create(pool);
+  rr->name_addr.uri = (pjsip_uri*)uri;
+
+  pjsip_msg_insert_first_hdr(msg, (pjsip_hdr*)rr);
+}
+
 /// Matrix receives an initial request.
 void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
 {
@@ -204,20 +237,14 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   }
   std::string to_matrix_user = matrix_uri_to_matrix_user(to_uri);
 
-  // Find the calling party in the P-Asserted-Identity header.
-  pjsip_routing_hdr* asserted_id =
-    (pjsip_routing_hdr*)pjsip_msg_find_hdr_by_name(req,
-                                                   &STR_P_ASSERTED_IDENTITY,
-                                                   NULL);
-  if (asserted_id == NULL)
+  pjsip_uri* from_uri = get_from_uri(req);
+  if (from_uri == NULL)
   {
-    LOG_DEBUG("No P-Asserted-Identity");
     pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
     send_response(rsp);
     free_msg(req);
     return;
   }
-  pjsip_uri* from_uri = (pjsip_uri*)pjsip_uri_get_uri(&asserted_id->name_addr);
   std::string from_matrix_user = ims_uri_to_matrix_user(from_uri);
 
   // Get the call ID.
@@ -264,22 +291,20 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
                                                   trail());
   // TODO Check and log response
 
-  std::string room_id;
-
   std::vector<std::string> invites;
   invites.push_back(to_matrix_user);
   rc = _config.connection->create_room(from_matrix_user,
                                        "Call from " + PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, from_uri),
                                        "", // Work around Matrix issue - should be "call-" + matrix_call_id,
                                        invites,
-                                       room_id,
+                                       _room_id,
                                        trail());
 
   std::string call_invite_event = _config.connection->build_call_invite_event(call_id,
                                                                               sdp,
                                                                               expires * 1000);
   rc = _config.connection->send_event(from_matrix_user,
-                                      room_id,
+                                      _room_id,
                                       MatrixConnection::EVENT_TYPE_CALL_INVITE,
                                       call_invite_event,
                                       trail());
@@ -287,13 +312,14 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   //std::string call_candidates_event = _config.connection->build_call_candidates_event(call_id,
   //                                                                                    candidates);
   //rc = _config.connection->send_event(from_matrix_user,
-  //                                    room_id,
+  //                                    _room_id,
   //                                    MatrixConnection::EVENT_TYPE_CALL_CANDIDATES,
   //                                    call_candidates_event,
   //                                    trail());
 
   // TODO Only signal ringing when event is published or user enters room?
   pjsip_msg* rsp = create_response(req, PJSIP_SC_RINGING);
+  add_record_route(rsp);
   send_response(rsp);
   free_msg(req);
 
@@ -309,6 +335,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
 /// - It can mangle the Record-Route and Route headers URIs.
 void MatrixTsx::on_rx_response(pjsip_msg* rsp, int fork_id)
 {
+  // Should never happen, but be on the safe side and just forward it.
   send_response(rsp);
 }
 
@@ -325,7 +352,55 @@ void MatrixTsx::on_rx_response(pjsip_msg* rsp, int fork_id)
 /// - It can mangle the Record-Route headers URIs.
 void MatrixTsx::on_rx_in_dialog_request(pjsip_msg* req)
 {
-  send_request(req);
+  const pjsip_route_hdr* route = route_hdr();
+  if ((route != NULL) &&
+      (is_uri_reflexive(route->name_addr.uri)))
+  {
+    pjsip_sip_uri* uri = (pjsip_sip_uri*)route->name_addr.uri;
+    pj_str_t room_str = pj_str("room");
+    pjsip_param* param = pjsip_param_find(&uri->other_param, &room_str);
+    if (param != NULL)
+    {
+      _room_id = PJUtils::pj_str_to_string(&param->value);
+    }
+  }
+
+  pjsip_uri* from_uri = get_from_uri(req);
+  if (from_uri == NULL)
+  {
+    pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
+    send_response(rsp);
+    free_msg(req);
+    return;
+  }
+  std::string from_matrix_user = ims_uri_to_matrix_user(from_uri);
+
+  // Get the call ID.
+  pjsip_cid_hdr* call_id_hdr = (pjsip_cid_hdr*)pjsip_msg_find_hdr_by_name(req,
+                                                                          &STR_CALL_ID,
+                                                                          NULL);
+  std::string call_id = PJUtils::pj_str_to_string(&call_id_hdr->id);
+
+  if (req->line.req.method.id != PJSIP_BYE_METHOD)
+  {
+    std::string call_hangup_event = _config.connection->build_call_hangup_event(call_id);
+    HTTPCode rc = _config.connection->send_event(from_matrix_user,
+                                                 _room_id,
+                                                 MatrixConnection::EVENT_TYPE_CALL_HANGUP,
+                                                 call_hangup_event,
+                                                 trail());
+
+    pjsip_msg* rsp = create_response(req, PJSIP_SC_OK);
+    send_response(rsp);
+    free_msg(req);
+  }
+  else
+  {
+    // TODO: Support other methods.
+    pjsip_msg* rsp = create_response(req, PJSIP_SC_NOT_IMPLEMENTED);
+    send_response(rsp);
+    free_msg(req);
+  }
 }
 
 void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& sdp)
@@ -357,11 +432,18 @@ void MatrixTsx::on_timer_expiry(void* context)
   if (!_answer_sdp.empty())
   {
     rsp = create_response(req, PJSIP_SC_OK);
+
+    pj_str_t mime_type = pj_str("application");
+    pj_str_t mime_subtype = pj_str("sdp");
+    pj_str_t content;
+    pj_cstr(&content, _answer_sdp.c_str());
+    rsp->body = pjsip_msg_body_create(get_pool(req), &mime_type, &mime_subtype, &content);
   }
   else
   {
     rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
   }
+  add_record_route(rsp);
   send_response(rsp);
   free_msg(req);
 }
