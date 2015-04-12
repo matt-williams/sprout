@@ -39,12 +39,19 @@
 
 #include "httpstack.h"
 
+class Matrix;
+
 /// @class MatrixTransactionHandler
 ///
 /// Handles Matrix transaction HTTP requests
 class MatrixTransactionHandler : public HttpStack::HandlerInterface
 {
+public:
+  MatrixTransactionHandler(Matrix* matrix) : _matrix(matrix) {}
   void process_request(HttpStack::Request& req, SAS::TrailId trail);
+
+private:
+  Matrix* _matrix;
 };
 
 #endif

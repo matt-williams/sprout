@@ -42,6 +42,9 @@
 #ifndef MATRIX_H__
 #define MATRIX_H__
 
+class Matrix;
+class MatrixTsx;
+
 extern "C" {
 #include <pjsip.h>
 #include <pjlib-util.h>
@@ -54,8 +57,6 @@ extern "C" {
 #include "sproutlet.h"
 #include "matrixhandlers.h"
 #include "matrixconnection.h"
-
-class MatrixTsx;
 
 /// Definition of MatrixTsx class.
 class Matrix : public Sproutlet
@@ -77,8 +78,16 @@ public:
                         const std::string& alias,
                         pjsip_msg* req);
 
+  MatrixTsx* get_tsx(std::string call_id);
+
+// TODO: Should really be friend methods
+//friend class MatrixTsx:
+  void add_tsx(std::string call_id, MatrixTsx* tsx);
+  void remove_tsx(std::string call_id);
+
 private:
   std::string _home_server;
+  std::map<std::string,MatrixTsx*> _tsx_map;
   MatrixTransactionHandler _transaction_handler;
   MatrixConnection _connection;
 };
@@ -92,24 +101,27 @@ public:
   class Config
   {
   public:
-    Config(std::string _home_server, MatrixConnection* _connection) :
-      home_server(_home_server), connection(_connection) {}
+    Config(Matrix* _matrix, std::string _home_server, MatrixConnection* _connection) :
+      matrix(_matrix), home_server(_home_server), connection(_connection) {}
     ~Config() {}
+    Matrix* matrix;
     const std::string home_server;
     MatrixConnection* connection;
   };
 
   /// Constructor.
-  MatrixTsx(SproutletTsxHelper* helper, Config& config) :
-    SproutletTsx(helper), _config(config) {}
+  MatrixTsx(SproutletTsxHelper* helper, Config& config);
 
   /// Destructor.
-  ~MatrixTsx() {}
+  ~MatrixTsx() { if (!_call_id.empty()) { _config.matrix->remove_tsx(_call_id); } }
 
   /// Implementation of SproutletTsx methods in matrix.
   virtual void on_rx_initial_request(pjsip_msg* req);
   virtual void on_rx_response(pjsip_msg* rsp, int fork_id);
   virtual void on_rx_in_dialog_request(pjsip_msg* req);
+  virtual void on_timer_expiry(void* context);
+
+  void rx_matrix_event(const std::string& type, const std::string& sdp);
 
 private:
   std::string ims_uri_to_matrix_user(pjsip_uri* uri);
@@ -119,6 +131,10 @@ private:
 
   /// The config object for this transaction.
   Config _config;
+  TimerID _timer_request;
+  TimerID _timer_now;
+  std::string _call_id;
+  std::string _answer_sdp;
 };
 
 #endif

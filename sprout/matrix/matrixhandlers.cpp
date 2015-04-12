@@ -35,8 +35,10 @@
  */
 
 #include "matrixhandlers.h"
+#include "matrix.h"
 #include "httpconnection.h"
 #include "json_parse_utils.h"
+#include <boost/algorithm/string/predicate.hpp>
 
 //
 // MatrixTransactionHandler methods.
@@ -57,10 +59,41 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
          events != doc["events"].End();
          ++events)
     {
-      JSON_ASSERT_CONTAINS(*events, "type");
-      JSON_ASSERT_STRING((*events)["type"]);
-      std::string type = (*events)["type"].GetString();
-      LOG_ERROR("Got event of type %s", type.c_str());
+      std::string type;
+      JSON_GET_STRING_MEMBER(*events, "type", type);
+      if (boost::starts_with(type, "m.call"))
+      {
+        JSON_ASSERT_CONTAINS(*events, "content");
+        JSON_ASSERT_OBJECT((*events)["content"]);
+
+        std::string call_id;
+        JSON_GET_STRING_MEMBER((*events)["content"], "call_id", call_id);
+        
+        SAS::Marker cid_marker(trail, MARKER_ID_SIP_CALL_ID, 1u);
+        cid_marker.add_var_param(call_id);
+        SAS::report_marker(cid_marker, SAS::Marker::Scope::Trace);
+
+        std::string sdp;
+        if (type == "m.call.invite")
+        {
+          JSON_ASSERT_CONTAINS((*events)["content"], "offer");
+          JSON_ASSERT_OBJECT((*events)["content"]["offer"]);
+          JSON_GET_STRING_MEMBER((*events)["content"]["offer"], "sdp", sdp);
+        }
+        else if (type == "m.call.answer")
+        {
+          JSON_ASSERT_CONTAINS((*events)["content"], "answer");
+          JSON_ASSERT_OBJECT((*events)["content"]["answer"]);
+          JSON_GET_STRING_MEMBER((*events)["content"]["answer"], "sdp", sdp);
+        }
+
+        // TODO Sort out locking - the MatrixTsx could be deleted under our feet
+        MatrixTsx* tsx = _matrix->get_tsx(call_id);
+        if (tsx != NULL)
+        {
+          tsx->rx_matrix_event(type, sdp);
+        }
+      }
     }
   }
   else

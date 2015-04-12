@@ -53,7 +53,8 @@ Matrix::Matrix(const std::string& home_server,
                LastValueCache* stats_aggregator) :
   Sproutlet("matrix"),
   _home_server(home_server),
-  _transaction_handler(),
+  _tsx_map(),
+  _transaction_handler(this),
   _connection(home_server,
               as_token,
               resolver,
@@ -94,9 +95,35 @@ SproutletTsx* Matrix::get_tsx(SproutletTsxHelper* helper,
                               const std::string& alias,
                               pjsip_msg* req)
 {
-  MatrixTsx::Config config(_home_server, &_connection);
+  MatrixTsx::Config config(this, _home_server, &_connection);
 
   return new MatrixTsx(helper, config);
+}
+
+void Matrix::add_tsx(std::string call_id, MatrixTsx* tsx)
+{
+  _tsx_map[call_id] = tsx;
+}
+
+void Matrix::remove_tsx(std::string call_id)
+{
+  _tsx_map.erase(call_id);
+}
+
+MatrixTsx* Matrix::get_tsx(std::string call_id)
+{
+  MatrixTsx* tsx = NULL;
+  auto tsxs = _tsx_map.find(call_id);
+  if (tsxs != _tsx_map.end())
+  {
+    tsx = (*tsxs).second;
+  }
+  return tsx;
+}
+
+MatrixTsx::MatrixTsx(SproutletTsxHelper* helper, Config& config) :
+  SproutletTsx(helper), _config(config)
+{
 }
 
 std::string MatrixTsx::ims_uri_to_matrix_user(pjsip_uri* uri)
@@ -204,6 +231,9 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   {
     matrix_call_id.replace(at_pos, 1, "-");
   }
+  // TODO Should probably do this in the constructor.
+  _call_id = call_id;
+  _config.matrix->add_tsx(call_id, this);
 
   // Get the expiry (if present).
   pjsip_expires_hdr* expires_hdr = (pjsip_expires_hdr*)pjsip_msg_find_hdr(req, PJSIP_H_EXPIRES, NULL);
@@ -262,10 +292,12 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   //                                    call_candidates_event,
   //                                    trail());
 
-  // TODO Don't abort!
-  pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
+  // TODO Only signal ringing when event is published or user enters room?
+  pjsip_msg* rsp = create_response(req, PJSIP_SC_RINGING);
   send_response(rsp);
   free_msg(req);
+
+  schedule_timer(NULL, _timer_request, expires * 1000);
 }
 
 /// Matrix receives a response. It will add all the Via headers from the
@@ -294,4 +326,42 @@ void MatrixTsx::on_rx_response(pjsip_msg* rsp, int fork_id)
 void MatrixTsx::on_rx_in_dialog_request(pjsip_msg* req)
 {
   send_request(req);
+}
+
+void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& sdp)
+{
+  if (type == "m.call.answer")
+  {
+    _answer_sdp = sdp;
+    // TODO Not sure I'm supposed to call this method when not in context, but from code-reading it should work.
+    // TODO Should maybe turn this into a formal "prod" API rather than explicitly abusing timers.
+    cancel_timer(_timer_request);
+    schedule_timer(NULL, _timer_now, 0);
+  }
+  else if (type == "m.call.hangup")
+  {
+    cancel_timer(_timer_request);
+    schedule_timer(NULL, _timer_now, 0);
+  }
+  else
+  {
+    LOG_DEBUG("Ignoring event of type %s on call %s", type.c_str(), _call_id.c_str());
+  }
+}
+
+// TODO It would be nice if on_timer_expiry gave you the TimerId that had expired
+void MatrixTsx::on_timer_expiry(void* context)
+{
+  pjsip_msg* req = original_request();
+  pjsip_msg* rsp;
+  if (!_answer_sdp.empty())
+  {
+    rsp = create_response(req, PJSIP_SC_OK);
+  }
+  else
+  {
+    rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
+  }
+  send_response(rsp);
+  free_msg(req);
 }
