@@ -61,38 +61,46 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
     {
       std::string type;
       JSON_GET_STRING_MEMBER(*events, "type", type);
-      if (boost::starts_with(type, "m.call"))
+
+      std::string room;
+      JSON_GET_STRING_MEMBER(*events, "room_id", room);
+
+      // TODO Sort out locking - the MatrixTsx could be deleted under our feet
+      MatrixTsx* tsx = _matrix->get_tsx(room);
+      if (tsx != NULL)
       {
-        JSON_ASSERT_CONTAINS(*events, "content");
-        JSON_ASSERT_OBJECT((*events)["content"]);
+        tsx->add_call_id_to_trail(trail);
+
+        std::string user;
+        JSON_GET_STRING_MEMBER(*events, "user_id", user);
 
         std::string call_id;
-        JSON_GET_STRING_MEMBER((*events)["content"], "call_id", call_id);
-        
-        SAS::Marker cid_marker(trail, MARKER_ID_SIP_CALL_ID, 1u);
-        cid_marker.add_var_param(call_id);
-        SAS::report_marker(cid_marker, SAS::Marker::Scope::Trace);
-
         std::string sdp;
-        if (type == "m.call.invite")
+        if (boost::starts_with(type, "m.call"))
         {
-          JSON_ASSERT_CONTAINS((*events)["content"], "offer");
-          JSON_ASSERT_OBJECT((*events)["content"]["offer"]);
-          JSON_GET_STRING_MEMBER((*events)["content"]["offer"], "sdp", sdp);
-        }
-        else if (type == "m.call.answer")
-        {
-          JSON_ASSERT_CONTAINS((*events)["content"], "answer");
-          JSON_ASSERT_OBJECT((*events)["content"]["answer"]);
-          JSON_GET_STRING_MEMBER((*events)["content"]["answer"], "sdp", sdp);
-        }
+          JSON_GET_STRING_MEMBER((*events)["content"], "call_id", call_id);
 
-        // TODO Sort out locking - the MatrixTsx could be deleted under our feet
-        MatrixTsx* tsx = _matrix->get_tsx(call_id);
-        if (tsx != NULL)
-        {
-          tsx->rx_matrix_event(type, sdp);
+          JSON_ASSERT_CONTAINS(*events, "content");
+          JSON_ASSERT_OBJECT((*events)["content"]);
+
+          if (type == "m.call.invite")
+          {
+            JSON_ASSERT_CONTAINS((*events)["content"], "offer");
+            JSON_ASSERT_OBJECT((*events)["content"]["offer"]);
+            JSON_GET_STRING_MEMBER((*events)["content"]["offer"], "sdp", sdp);
+          }
+          else if (type == "m.call.answer")
+          {
+            JSON_ASSERT_CONTAINS((*events)["content"], "answer");
+            JSON_ASSERT_OBJECT((*events)["content"]["answer"]);
+            JSON_GET_STRING_MEMBER((*events)["content"]["answer"], "sdp", sdp);
+          }
         }
+        tsx->rx_matrix_event(type, user, call_id, sdp);
+      }
+      else
+      {
+        LOG_DEBUG("Ignoring event of type %s in empty room %s", type.c_str(), room.c_str());
       }
     }
   }

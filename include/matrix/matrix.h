@@ -78,12 +78,12 @@ public:
                         const std::string& alias,
                         pjsip_msg* req);
 
-  MatrixTsx* get_tsx(std::string call_id);
+  MatrixTsx* get_tsx(std::string room_id);
 
 // TODO: Should really be friend methods
 //friend class MatrixTsx:
-  void add_tsx(std::string call_id, MatrixTsx* tsx);
-  void remove_tsx(std::string call_id);
+  void add_tsx(std::string room_id, MatrixTsx* tsx);
+  void remove_tsx(std::string room_id);
 
 private:
   std::string _home_server;
@@ -113,15 +113,17 @@ public:
   MatrixTsx(SproutletTsxHelper* helper, Config& config);
 
   /// Destructor.
-  ~MatrixTsx() { if (!_call_id.empty()) { _config.matrix->remove_tsx(_call_id); } }
+  ~MatrixTsx() { if (!_room_id.empty()) { _config.matrix->remove_tsx(_room_id); } }
 
   /// Implementation of SproutletTsx methods in matrix.
   virtual void on_rx_initial_request(pjsip_msg* req);
   virtual void on_rx_response(pjsip_msg* rsp, int fork_id);
   virtual void on_rx_in_dialog_request(pjsip_msg* req);
+  virtual void on_rx_cancel(int status_code, pjsip_msg* cancel_req);
   virtual void on_timer_expiry(void* context);
 
-  void rx_matrix_event(const std::string& type, const std::string& sdp);
+  void rx_matrix_event(const std::string& type, const std::string& user, const std::string& call_id, const std::string& sdp);
+  void add_call_id_to_trail(SAS::TrailId trail);
 
 private:
   std::string ims_uri_to_matrix_user(pjsip_uri* uri);
@@ -130,14 +132,18 @@ private:
   void parse_sdp(const std::string& body, std::string& sdp, std::vector<std::string>& candidates);
   pjsip_uri* get_from_uri(pjsip_msg* req);
   void add_record_route(pjsip_msg* msg);
+  void add_contact(pjsip_msg* msg, pjsip_uri* uri);
 
   /// The config object for this transaction.
   Config _config;
   TimerID _timer_request;
   TimerID _timer_now;
+  std::string _from_matrix_user;
   std::string _call_id;
   std::string _room_id;
+  std::string _offer_sdp;
   std::string _answer_sdp;
+  int _expires;
 };
 
 #endif

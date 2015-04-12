@@ -100,20 +100,20 @@ SproutletTsx* Matrix::get_tsx(SproutletTsxHelper* helper,
   return new MatrixTsx(helper, config);
 }
 
-void Matrix::add_tsx(std::string call_id, MatrixTsx* tsx)
+void Matrix::add_tsx(std::string room_id, MatrixTsx* tsx)
 {
-  _tsx_map[call_id] = tsx;
+  _tsx_map[room_id] = tsx;
 }
 
-void Matrix::remove_tsx(std::string call_id)
+void Matrix::remove_tsx(std::string room_id)
 {
-  _tsx_map.erase(call_id);
+  _tsx_map.erase(room_id);
 }
 
-MatrixTsx* Matrix::get_tsx(std::string call_id)
+MatrixTsx* Matrix::get_tsx(std::string room_id)
 {
   MatrixTsx* tsx = NULL;
-  auto tsxs = _tsx_map.find(call_id);
+  auto tsxs = _tsx_map.find(room_id);
   if (tsxs != _tsx_map.end())
   {
     tsx = (*tsxs).second;
@@ -222,6 +222,13 @@ void MatrixTsx::add_record_route(pjsip_msg* msg)
   pjsip_msg_insert_first_hdr(msg, (pjsip_hdr*)rr);
 }
 
+void MatrixTsx::add_contact(pjsip_msg* msg, pjsip_uri* uri)
+{
+  pjsip_contact_hdr* contact_hdr = pjsip_contact_hdr_create(get_pool(msg));
+  contact_hdr->uri = (pjsip_uri*)uri;
+  pjsip_msg_add_hdr(msg, (pjsip_hdr*)contact_hdr);
+}
+
 /// Matrix receives an initial request.
 void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
 {
@@ -246,6 +253,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
     return;
   }
   std::string from_matrix_user = ims_uri_to_matrix_user(from_uri);
+  _from_matrix_user = from_matrix_user;
 
   // Get the call ID.
   pjsip_cid_hdr* call_id_hdr = (pjsip_cid_hdr*)pjsip_msg_find_hdr_by_name(req,
@@ -260,11 +268,11 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   }
   // TODO Should probably do this in the constructor.
   _call_id = call_id;
-  _config.matrix->add_tsx(call_id, this);
 
   // Get the expiry (if present).
   pjsip_expires_hdr* expires_hdr = (pjsip_expires_hdr*)pjsip_msg_find_hdr(req, PJSIP_H_EXPIRES, NULL);
   int expires = (expires_hdr != NULL) ? expires_hdr->ivalue : 180;
+  _expires = expires;
 
   // Get the SDP body.
   if (req->body == NULL ||
@@ -282,6 +290,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   //std::vector<std::string> candidates;
   //parse_sdp(body, sdp, candidates);
   std::string sdp = std::string((const char*)req->body->data, req->body->len);
+  _offer_sdp = sdp;
 
   LOG_DEBUG("Call from %s (%s) to %s (%s)", PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, from_uri).c_str(), from_matrix_user.c_str(), PJUtils::uri_to_string(PJSIP_URI_IN_REQ_URI, to_uri).c_str(), to_matrix_user.c_str());
   LOG_DEBUG("Call ID is %s, expiry is %d", call_id.c_str(), expires);
@@ -299,15 +308,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
                                        invites,
                                        _room_id,
                                        trail());
-
-  std::string call_invite_event = _config.connection->build_call_invite_event(call_id,
-                                                                              sdp,
-                                                                              expires * 1000);
-  rc = _config.connection->send_event(from_matrix_user,
-                                      _room_id,
-                                      MatrixConnection::EVENT_TYPE_CALL_INVITE,
-                                      call_invite_event,
-                                      trail());
+  _config.matrix->add_tsx(_room_id, this);
 
   //std::string call_candidates_event = _config.connection->build_call_candidates_event(call_id,
   //                                                                                    candidates);
@@ -320,6 +321,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   // TODO Only signal ringing when event is published or user enters room?
   pjsip_msg* rsp = create_response(req, PJSIP_SC_RINGING);
   add_record_route(rsp);
+  add_contact(rsp, req->line.req.uri);
   send_response(rsp);
   free_msg(req);
 
@@ -381,7 +383,7 @@ void MatrixTsx::on_rx_in_dialog_request(pjsip_msg* req)
                                                                           NULL);
   std::string call_id = PJUtils::pj_str_to_string(&call_id_hdr->id);
 
-  if (req->line.req.method.id != PJSIP_BYE_METHOD)
+  if (req->line.req.method.id == PJSIP_BYE_METHOD)
   {
     std::string call_hangup_event = _config.connection->build_call_hangup_event(call_id);
     HTTPCode rc = _config.connection->send_event(from_matrix_user,
@@ -403,9 +405,23 @@ void MatrixTsx::on_rx_in_dialog_request(pjsip_msg* req)
   }
 }
 
-void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& sdp)
+void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& user, const std::string& call_id, const std::string& sdp)
 {
-  if (type == "m.call.answer")
+  LOG_DEBUG("Received matrix event %s for user %s on call ID %s with SDP %s", type.c_str(), user.c_str(), call_id.c_str(), sdp.c_str());
+  if ((type == "m.room.member") &&
+      (user != _from_matrix_user))
+  {
+    // TODO: Adjust expires according to time passed
+    std::string call_invite_event = _config.connection->build_call_invite_event(_call_id,
+                                                                                _offer_sdp,
+                                                                                _expires * 1000);
+    HTTPCode rc = _config.connection->send_event(_from_matrix_user,
+                                                 _room_id,
+                                                 MatrixConnection::EVENT_TYPE_CALL_INVITE,
+                                                 call_invite_event,
+                                                 trail());
+  }
+  else if (type == "m.call.answer")
   {
     _answer_sdp = sdp;
     // TODO Not sure I'm supposed to call this method when not in context, but from code-reading it should work.
@@ -422,6 +438,18 @@ void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& sdp)
   {
     LOG_DEBUG("Ignoring event of type %s on call %s", type.c_str(), _call_id.c_str());
   }
+}
+
+void MatrixTsx::on_rx_cancel(int status_code, pjsip_msg* cancel_req)
+{
+  std::string call_hangup_event = _config.connection->build_call_hangup_event(_call_id);
+  HTTPCode rc = _config.connection->send_event(_from_matrix_user,
+                                               _room_id,
+                                               MatrixConnection::EVENT_TYPE_CALL_HANGUP,
+                                               call_hangup_event,
+                                               trail());
+
+  free_msg(cancel_req);
 }
 
 // TODO It would be nice if on_timer_expiry gave you the TimerId that had expired
@@ -446,4 +474,11 @@ void MatrixTsx::on_timer_expiry(void* context)
   add_record_route(rsp);
   send_response(rsp);
   free_msg(req);
+}
+
+void MatrixTsx::add_call_id_to_trail(SAS::TrailId trail)
+{
+  SAS::Marker cid_marker(trail, MARKER_ID_SIP_CALL_ID, 1u);
+  cid_marker.add_var_param(_call_id);
+  SAS::report_marker(cid_marker, SAS::Marker::Scope::Trace);
 }
