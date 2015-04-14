@@ -226,6 +226,51 @@ HTTPCode MatrixConnection::register_user(const std::string& userpart,
   return rc;
 }
 
+HTTPCode MatrixConnection::parse_get_room_rsp(const std::string& response,
+                                              std::string& id)
+{
+  HTTPCode rc = HTTP_OK;
+
+  rapidjson::Document doc;
+  doc.Parse<0>(response.c_str());
+
+  if (!doc.HasParseError())
+  {
+    JSON_ASSERT_CONTAINS(doc, "room_id");
+    JSON_ASSERT_STRING(doc["room_id"]);
+    id = doc["room_id"].GetString();
+  }
+  else
+  {
+    LOG_INFO("Failed to parse Matrix-supplied JSON body: %s", response.c_str());
+    rc = HTTP_SERVER_ERROR;
+  }
+
+  return rc;
+}
+
+HTTPCode MatrixConnection::get_room_for_alias(const std::string& alias,
+                                              std::string& id,
+                                              SAS::TrailId trail)
+{
+  std::string path = "/_matrix/client/api/v1/directory/room/" + alias + "?access_token=" + _as_token;
+  std::string response;
+
+  HTTPCode rc = _http.send_get(path, response, NULL, trail);
+
+  if (rc == HTTP_OK)
+  {
+    rc = parse_get_room_rsp(response, id);
+  }
+  else
+  {
+    // TODO Parse error response
+  }
+
+
+  return rc;
+}
+
 std::string MatrixConnection::build_create_room_req(const std::string& name,
                                                     const std::string& alias,
                                                     const std::vector<std::string>& invites,
@@ -319,6 +364,39 @@ HTTPCode MatrixConnection::create_room(const std::string& user,
   {
     // TODO Parse error response
   }
+
+  return rc;
+}
+
+std::string MatrixConnection::build_create_alias_req(const std::string& id)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    if (!id.empty())
+    {
+      writer.String("room_id");
+      writer.String(id.c_str());
+    }
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+HTTPCode MatrixConnection::create_alias(const std::string& id,
+                                        const std::string& alias,
+                                        const SAS::TrailId trail)
+{
+  std::string path = "/_matrix/client/api/v1/directory/room/" + alias + "?access_token=" + _as_token;
+  std::map<std::string,std::string> headers;
+  std::string response;
+  std::string body = build_create_alias_req(id);
+
+  HTTPCode rc = _http.send_put(path, headers, response, body, trail);
+
+  // TODO Parse error response
 
   return rc;
 }

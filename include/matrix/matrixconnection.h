@@ -76,6 +76,9 @@ public:
                        std::string& hs_token);
   HTTPCode register_user(const std::string& userpart,
                          const SAS::TrailId trail = 0);
+  HTTPCode get_room_for_alias(const std::string& alias,
+                              std::string& id,
+                              const SAS::TrailId trail);
   HTTPCode create_room(const std::string& user,
                        const std::string& name,
                        const std::string& alias,
@@ -84,6 +87,9 @@ public:
                        const SAS::TrailId trail = 0,
                        bool is_public = false,
                        const std::string& topic = "");
+  HTTPCode create_alias(const std::string& id,
+                        const std::string& alias,
+                        const SAS::TrailId trail);
   std::string build_call_invite_event(const std::string& call_id,
                                       const std::string& sdp,
                                       const int lifetime);
@@ -106,6 +112,9 @@ private:
   HTTPCode parse_register_as_rsp(const std::string& response,
                                  std::string& hs_token);
   std::string build_register_user_req(const std::string& userpart);
+  HTTPCode parse_get_room_rsp(const std::string& response,
+                              std::string& id);
+  std::string build_create_alias_req(const std::string& id);
   std::string build_create_room_req(const std::string& name,
                                     const std::string& alias,
                                     const std::vector<std::string>& invites,
