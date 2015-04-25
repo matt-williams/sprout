@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 
-# @file poll_sprout.sh
+# @file matrix-gateway.postinst
 #
 # Project Clearwater - IMS in the Cloud
 # Copyright (C) 2014  Metaswitch Networks Ltd
@@ -34,29 +34,39 @@
 # under which the OpenSSL Project distributes the OpenSSL toolkit software,
 # as those licenses appear in the file LICENSE-OPENSSL.
 
-# This script uses a SIP message to poll a process and check whether it is
-# healthy.
+#
+# see: dh_installdeb(1)
 
-# In case sprout has only just restarted, give it a few seconds to come up
-sleep 5
+set -e
 
-# Read the config, defaulting appropriately.
-scscf=5054
-icscf=0
-. /etc/clearwater/config
-[ -z $signaling_namespace ] || namespace_prefix="ip netns exec $signaling_namespace"
+# summary of how this script can be called:
+#        * <postinst> `configure' <most-recently-configured-version>
+#        * <old-postinst> `abort-upgrade' <new version>
+#        * <conflictor's-postinst> `abort-remove' `in-favour' <package>
+#          <new-version>
+#        * <postinst> `abort-remove'
+#        * <deconfigured's-postinst> `abort-deconfigure' `in-favour'
+#          <failed-install-package> <version> `removing'
+#          <conflicting-package> <version>
+# for details, see http://www.debian.org/doc/debian-policy/ or
+# the debian-policy package
 
-# If we have S-CSCF configured, check it.
-rc=0
-if [ "$scscf" != "0" ] ; then
-  $namespace_prefix /usr/share/clearwater/bin/poll-sip $scscf
-  rc=$?
-fi
+case "$1" in
+    configure)
+        # Restart sprout to force reload of new plug-in.  Always do this by
+        # terminating sprout so monit will restart it more-or-less immediately.
+        # (monit restart seems to have significant lag.)
+        # Don't fail if it's already stopped.
+        service sprout stop || /bin/true
+    ;;
 
-# If that succeeded and we have I-CSCF configured, check it.
-if [ $rc = 0 ] && [ "$icscf" != "0" ] ; then
-  $namespace_prefix /usr/share/clearwater/bin/poll-sip $icscf
-  rc=$?
-fi
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
 
-exit $rc
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0

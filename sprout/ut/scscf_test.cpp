@@ -1762,6 +1762,25 @@ TEST_F(SCSCFTest, TestEnumNPBGCFTel)
   doSuccessfulFlow(msg, testing::MatchesRegex(".*+15108580401;rn.*+151085804;npdi@homedomain.*"), hdrs, false);
 }
 
+// Test where the BGCF does an ENUM lookup which returns an invalid rule. This
+// test uses two ENUM rules. The first one is invoked by the S-CSCF before
+// routing to the BGCF. The BGCF does the second lookup. At this point an
+// invalid rule is returned and we reply with a 404 ENUM failure.
+TEST_F(SCSCFTest, TestBGCFInvalidEnumRule)
+{
+  add_host_mapping("ut.cw-ngv.com", "10.9.8.7");
+  SCOPED_TRACE("");
+  register_uri(_store, _hss_connection, "6505551239", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+  _hss_connection->set_impu_result("sip:6505551000@homedomain", "call", HSSConnection::STATE_REGISTERED, "");
+  Message msg;
+  msg._toscheme = "tel";
+  msg._to = "16505551239";
+  msg._route = "Route: <sip:homedomain;orig>";
+  msg._todomain = "";
+  list<HeaderMatcher> hdrs;
+  doSlowFailureFlow(msg, 404, "", "ENUM failure");
+}
+
 TEST_F(SCSCFTest, TestValidBGCFRoute)
 {
   SCOPED_TRACE("");
@@ -6287,6 +6306,42 @@ TEST_F(SCSCFTest, TestNoSecondPAIHdrTerm)
   list<HeaderMatcher> hdrs;
   hdrs.push_back(HeaderMatcher("P-Asserted-Identity", "P-Asserted-Identity: \"Andy\" <sip:6505551000@homedomain>"));
   doSuccessfulFlow(msg, testing::MatchesRegex(".*wuntootreefower.*"), hdrs, false);
+}
+
+// Test that the Session-Expires header is correctly altered by the Min-SE 
+// header
+TEST_F(SCSCFTest, TestMinSEOverride)
+{
+  SCOPED_TRACE("");
+  register_uri(_store, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+  _hss_connection->set_impu_result("sip:6505551000@homedomain", "call", HSSConnection::STATE_REGISTERED, "");
+  Message msg;
+  msg._extra = "Session-Expires: 600\nMin-SE: 800";
+  list<HeaderMatcher> hdrs;
+  hdrs.push_back(HeaderMatcher("Session-Expires", "Session-Expires: 800"));
+  doSuccessfulFlow(msg, testing::MatchesRegex(".*wuntootreefower.*"), hdrs, false);
+}
+
+// Test that a request where the Min-SE header is too large is rejected
+TEST_F(SCSCFTest, TestMinSETooLarge)
+{
+  SCOPED_TRACE("");
+  register_uri(_store, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+  _hss_connection->set_impu_result("sip:6505551000@homedomain", "call", HSSConnection::STATE_REGISTERED, "");
+  Message msg;
+  msg._extra = "Session-Expires: 600\nMin-SE: 1000";
+  doSlowFailureFlow(msg, 480);
+}
+
+// Test that a request where the Session-Expiry header is too large is rejected
+TEST_F(SCSCFTest, TestSessionExpiresTooLarge)
+{
+  SCOPED_TRACE("");
+  register_uri(_store, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+  _hss_connection->set_impu_result("sip:6505551000@homedomain", "call", HSSConnection::STATE_REGISTERED, "");
+  Message msg;
+  msg._extra = "Session-Expires: 1000";
+  doSlowFailureFlow(msg, 480);
 }
 
 /// Test handling of 430 Flow Failed response

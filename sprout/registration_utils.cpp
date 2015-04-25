@@ -132,28 +132,42 @@ void RegistrationUtils::register_with_application_servers(Ifcs& ifcs,
     SAS::report_event(event);
 
     status = pjsip_endpt_create_request(stack_data.endpt,
-                               &method,       // Method
-                               &stack_data.scscf_uri, // Target
-                               &served_user_uri,      // From
-                               &served_user_uri,      // To
-                               &served_user_uri,      // Contact
-                               NULL,          // Auto-generate Call-ID
-                               1,             // CSeq
-                               NULL,          // No body
-                               &tdata);       // OUT
+                                        &method,               // Method
+                                        &stack_data.scscf_uri, // Target
+                                        &served_user_uri,      // From
+                                        &served_user_uri,      // To
+                                        &served_user_uri,      // Contact
+                                        NULL,                  // Auto-generate Call-ID
+                                        1,                     // CSeq
+                                        NULL,                  // No body
+                                        &tdata);               // OUT
 
-    assert(status == PJ_SUCCESS);
-
-    // As per TS 24.229, section 5.4.1.7, note 1, we don't fill in any P-Associated-URI details.
-    ifcs.interpret(SessionCase::Originating, true, is_initial_registration, tdata->msg, as_list, trail);
-
-    status = pjsip_tx_data_dec_ref(tdata);
-    assert(status == PJSIP_EBUFDESTROYED);
+    if (status == PJ_SUCCESS)
+    {
+      // As per TS 24.229, section 5.4.1.7, note 1, we don't fill in any
+      // P-Associated-URI details.
+      ifcs.interpret(SessionCase::Originating,
+                     true,
+                     is_initial_registration,
+                     tdata->msg,
+                     as_list,
+                     trail);
+      pjsip_tx_data_dec_ref(tdata);
+    }
+    else
+    {
+      LOG_DEBUG("Unable to create third party registration for %s",
+                served_user.c_str());
+      SAS::Event event(trail, SASEvent::DEREGISTER_AS_FAILED, 0);
+      event.add_var_param(served_user);
+      SAS::report_event(event);
+    }
   }
   else
   {
     ifcs.interpret(SessionCase::Originating, true, is_initial_registration, received_register->msg_info.msg, as_list, trail);
   }
+
   LOG_INFO("Found %d Application Servers", as_list.size());
 
   // Loop through the as_list
@@ -204,20 +218,20 @@ void send_register_to_as(pjsip_rx_data *received_register,
   pj_cstr(&as_uri, as.server_name.c_str());
 
   status = pjsip_endpt_create_request(stack_data.endpt,
-                                      &method,      // Method
-                                      &as_uri,      // Target
-                                      &stack_data.scscf_uri,   // From
-                                      &user_uri,    // To
-                                      &stack_data.scscf_uri,   // Contact
-                                      NULL,         // Auto-generate Call-ID
-                                      1,            // CSeq
-                                      NULL,         // No body
-                                      &tdata);      // OUT
+                                      &method,               // Method
+                                      &as_uri,               // Target
+                                      &stack_data.scscf_uri, // From
+                                      &user_uri,             // To
+                                      &stack_data.scscf_uri, // Contact
+                                      NULL,                  // Auto-generate Call-ID
+                                      1,                     // CSeq
+                                      NULL,                  // No body
+                                      &tdata);               // OUT
 
   if (status != PJ_SUCCESS)
   {
     //LCOV_EXCL_START
-    LOG_ERROR("Failed to build third-party REGISTER request for server %s",
+    LOG_DEBUG("Failed to build third-party REGISTER request for server %s",
               as.server_name.c_str());
     return;
     //LCOV_EXCL_STOP
@@ -338,8 +352,9 @@ static bool expire_bindings(RegStore *store, const std::string& aor, const std::
 {
   // We need the retry loop to handle the store's compare-and-swap.
   bool all_bindings_expired = false;
+  Store::Status set_rc;
 
-  for (;;)  // LCOV_EXCL_LINE No UT for retry loop.
+  do
   {
     RegStore::AoR* aor_data = store->get_aor_data(aor, trail);
     if (aor_data == NULL)
@@ -361,13 +376,15 @@ static bool expire_bindings(RegStore *store, const std::string& aor, const std::
                                             // single binding (flow failed).
     }
 
-    bool ok = store->set_aor_data(aor, aor_data, false, trail, all_bindings_expired);
-    delete aor_data;
-    if (ok)
-    {
-      break;
-    }
-  }         // LCOV_EXCL_LINE No UT for retry loop.    
+    set_rc = store->set_aor_data(aor, aor_data, false, trail, all_bindings_expired);
+    delete aor_data; aor_data = NULL;
+
+    // We can only say for sure that the bindings were expired if we were able
+    // to update the store.
+    all_bindings_expired = (all_bindings_expired && (set_rc == Store::OK));
+
+  }
+  while (set_rc == Store::DATA_CONTENTION);
 
   return all_bindings_expired;
 }

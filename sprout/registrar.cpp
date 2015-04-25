@@ -231,6 +231,7 @@ RegStore::AoR* write_to_store(RegStore* primary_store,       ///<store to write 
   bool is_initial_registration = true;
   std::map<std::string, RegStore::AoR::Binding> bindings_for_notify;
   bool all_bindings_expired = false;
+  Store::Status set_rc;
 
   do
   {
@@ -428,8 +429,18 @@ RegStore::AoR* write_to_store(RegStore* primary_store,       ///<store to write 
 
     // Finally, update the cseq
     aor_data->_notify_cseq++;
+
+    set_rc = primary_store->set_aor_data(aor,
+                                         aor_data,
+                                         send_notify,
+                                         trail,
+                                         all_bindings_expired);
+    if (set_rc != Store::OK)
+    {
+      delete aor_data; aor_data = NULL;
+    }
   }
-  while (!primary_store->set_aor_data(aor, aor_data, send_notify, trail, all_bindings_expired));
+  while (set_rc == Store::DATA_CONTENTION);
 
   // If we allocated the backup AoR, tidy up.
   if (backup_aor_alloced)
@@ -865,6 +876,9 @@ void process_register_request(pjsip_rx_data* rdata)
     }
   }
 
+  SAS::Event reg_Accepted(trail, SASEvent::REGISTER_ACCEPTED, 0);
+  SAS::report_event(reg_Accepted);
+
   // Deal with path header related fields in the response.
   pjsip_routing_hdr* path_hdr = (pjsip_routing_hdr*)
                               pjsip_msg_find_hdr_by_name(msg, &STR_PATH, NULL);
@@ -1032,7 +1046,7 @@ pj_status_t init_registrar(RegStore* registrar_store,
     status = PJ_EINVAL;
     // LCOV_EXCL_STOP
   }
-  
+
   return status;
 }
 

@@ -75,6 +75,7 @@ struct options
   std::string                          external_icscf_uri;
   int                                  record_routing_model;
   int                                  default_session_expires;
+  int                                  max_session_expires;
   int                                  target_latency_us;
   std::string                          local_host;
   std::string                          public_host;
@@ -85,7 +86,6 @@ struct options
   std::string                          trusted_hosts;
   bool                                 auth_enabled;
   std::string                          auth_realm;
-  std::string                          auth_config;
   std::string                          sas_server;
   std::string                          sas_system_name;
   std::string                          hss_server;
@@ -129,6 +129,8 @@ struct options
   float                                min_token_rate;
   int                                  cass_target_latency_us;
   int                                  exception_max_ttl;
+  std::string                          matrix_home_server;
+  std::string                          matrix_as_token;
 };
 
 // Objects that must be shared with dynamically linked sproutlets must be

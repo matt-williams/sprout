@@ -76,6 +76,19 @@ log_directory=/var/log/$NAME
 . /lib/lsb/init-functions
 
 #
+# Function to set up environment
+#
+setup_environment()
+{
+        export LD_LIBRARY_PATH=/usr/share/clearwater/sprout/lib
+        ulimit -Hn 1000000
+        ulimit -Sn 1000000
+        ulimit -c unlimited
+        # enable gdb to dump a parent bono process's stack
+        echo 0 > /proc/sys/kernel/yama/ptrace_scope
+}
+
+#
 # Function to pull in settings prior to starting the daemon
 #
 get_settings()
@@ -111,6 +124,15 @@ get_settings()
             [ -r $file ] && . $file
           done
         fi
+}
+
+#
+# Function to get the arguments to pass to the process
+#
+get_daemon_args()
+{
+        # Get the settings
+        get_settings
 
         if [ $IBCF_ENABLED = Y ]
         then
@@ -118,6 +140,8 @@ get_settings()
         fi
 
         [ -z "$ralf_hostname" ] || ralf_arg="--ralf $ralf_hostname"
+        # cdf_identity is the correct option for billing cdf.  For historical reasons, we also allow billing_cdf.
+        [ -z "$cdf_identity" ] || billing_cdf_arg="--billing-cdf $cdf_identity"
         [ -z "$billing_cdf" ] || billing_cdf_arg="--billing-cdf $billing_cdf"
         [ -z "$target_latency_us" ] || target_latency_us_arg="--target-latency-us $target_latency_us"
         [ -z "$max_tokens" ] || max_tokens_arg="--max-tokens $max_tokens"
@@ -125,28 +149,7 @@ get_settings()
         [ -z "$min_token_rate" ] || min_token_rate_arg="--min-token-rate $min_token_rate"
         [ -z "$signaling_namespace" ] || namespace_prefix="ip netns exec $signaling_namespace"
         [ -z "$exception_max_ttl" ] || exception_max_ttl_arg="--exception-max-ttl $exception_max_ttl"
-}
 
-#
-# Function that starts the daemon/service
-#
-do_start()
-{
-        # Return
-        #   0 if daemon has been started
-        #   1 if daemon was already running
-        #   2 if daemon could not be started
-        start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON --test > /dev/null \
-                || return 1
-
-        # daemon is not running, so attempt to start it.
-        export LD_LIBRARY_PATH=/usr/share/clearwater/sprout/lib
-        ulimit -Hn 1000000
-        ulimit -Sn 1000000
-        ulimit -c unlimited
-        # enable gdb to dump a parent bono process's stack
-        echo 0 > /proc/sys/kernel/yama/ptrace_scope
-        get_settings
         DAEMON_ARGS="--domain $home_domain
                      --localhost $local_ip,$public_hostname
                      --alias $public_ip
@@ -170,7 +173,23 @@ do_start()
                      $exception_max_ttl_arg"
 
         [ "$additional_home_domains" = "" ] || DAEMON_ARGS="$DAEMON_ARGS --additional-domains $additional_home_domains"
+}
 
+#
+# Function that starts the daemon/service
+#
+do_start()
+{
+        # Return
+        #   0 if daemon has been started
+        #   1 if daemon was already running
+        #   2 if daemon could not be started
+        start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON --test > /dev/null \
+                || return 1
+
+        # daemon is not running, so attempt to start it.
+        setup_environment
+        get_daemon_args
         $namespace_prefix start-stop-daemon --start --quiet --background --make-pidfile --pidfile $PIDFILE --exec $DAEMON --chuid $NAME --chdir $HOME -- $DAEMON_ARGS \
                 || return 2
         # Add code here, if necessary, that waits for the process to be ready
@@ -205,6 +224,17 @@ do_stop()
 }
 
 #
+# Function that runs the daemon/service in the foreground
+#
+do_run()
+{
+        setup_environment
+        get_daemon_args
+        $namespace_prefix start-stop-daemon --start --quiet --exec $DAEMON --chuid $NAME --chdir $HOME -- $DAEMON_ARGS \
+                || return 2
+}
+
+#
 # Function that aborts the daemon/service
 #
 # This is very similar to do_stop except it sends SIGABRT to dump a core file
@@ -234,7 +264,7 @@ do_reload() {
         # restarting (for example, when it is sent a SIGHUP),
         # then implement that here.
         #
-        start-stop-daemon --stop --signal 1 --quiet --pidfile $PIDILE --name $EXECNAME
+        start-stop-daemon --stop --signal 1 --quiet --pidfile $PIDFILE --name $EXECNAME
         return 0
 }
 
@@ -290,6 +320,14 @@ case "$1" in
   stop)
         [ "$VERBOSE" != no ] && log_daemon_msg "Stopping $DESC" "$NAME"
         do_stop
+        case "$?" in
+                0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
+                2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
+        esac
+        ;;
+  run)
+        [ "$VERBOSE" != no ] && log_daemon_msg "Running $DESC" "$NAME"
+        do_run
         case "$?" in
                 0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
                 2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
@@ -364,8 +402,7 @@ case "$1" in
         do_unquiesce
         ;;
   *)
-        #echo "Usage: $SCRIPTNAME {start|stop|restart|reload|force-reload|abort-restart|start-quiesce|quiesce|unquiesce}" >&2
-        echo "Usage: $SCRIPTNAME {start|stop|status|restart|force-reload|abort-restart|start-quiesce|quiesce|unquiesce}" >&2
+        echo "Usage: $SCRIPTNAME {start|stop|run|status|restart|force-reload|abort|abort-restart|start-quiesce|quiesce|unquiesce}" >&2
         exit 3
         ;;
 esac
