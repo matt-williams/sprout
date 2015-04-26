@@ -98,16 +98,96 @@ protected:
 
   class UACTsx;
 
-  /// Class tracking the UAS-related state for a proxied transaction.
   class UASTsx
   {
-
   public:
     /// Constructor.
     UASTsx(BasicProxy* proxy);
 
     /// Destructor.
     virtual ~UASTsx();
+
+    /// Initializes the UAS transaction.
+    virtual pj_status_t init(pjsip_rx_data* rdata) { return PJ_SUCCESS; };
+
+    /// Handle the incoming half of a transaction request.
+    virtual void process_tsx_request(pjsip_rx_data* rdata) = 0;
+
+    /// Handle a received CANCEL request.
+    virtual void process_cancel_request(pjsip_rx_data* rdata) = 0;
+
+    /// Handles a response to an associated UACTsx.
+    virtual void on_new_client_response(UACTsx* uac_tsx,
+                                        pjsip_tx_data *tdata) = 0;
+
+    /// Notification that an client transaction is not responding.
+    virtual void on_client_not_responding(UACTsx* uac_tsx,
+                                          pjsip_event_id_e event) = 0;
+
+    /// Notification that a response is being transmitted on this transaction.
+    virtual void on_tx_response(pjsip_tx_data* tdata) = 0;
+
+    /// Notification that a request is being transmitted to a client.
+    virtual void on_tx_client_request(pjsip_tx_data* tdata, UACTsx* uac_tsx) = 0;
+
+    /// Notification that the underlying PJSIP transaction has changed state.
+    /// After calling this, the caller must not assume that the UASTsx still
+    /// exists - if the PJSIP transaction is being destroyed, this method will
+    /// destroy the UASTsx.
+    virtual void on_tsx_state(pjsip_event* event) = 0;
+
+    /// Enters this transaction's context.  While in the transaction's
+    /// context, it will not be destroyed.  Whenever enter_context is called,
+    /// exit_context must be called before the end of the method.
+    void enter_context();
+
+    /// Exits this transaction's context.  On return from this method, the caller
+    /// must not assume that the transaction still exists.
+    void exit_context();
+
+    /// Returns the SAS trail identifier attached to the transaction.
+    SAS::TrailId trail() const { return _trail; }
+
+  protected:
+    /// Disassociates the specified UAC transaction from this UAS transaction,
+    /// and vice-versa.  This must be called before destroying either transaction.
+    void dissociate(UACTsx* uac_tsx);
+
+    /// Owning proxy object.
+    BasicProxy* _proxy;
+
+    /// PJSIP group lock used to protect all PJSIP UAS and UAC transactions
+    /// involved in this proxied request.
+    pj_grp_lock_t* _lock;
+
+    /// The trail identifier for the transaction/request.
+    SAS::TrailId _trail;
+
+    /// Associated UACTsx objects for each forked request.
+    std::vector<UACTsx*> _uac_tsx;
+
+    /// Count of targets the request is about to be forked to.
+    size_t _pending_sends;
+
+    /// Count of targets the request was forked to that have yet to respond.
+    size_t _pending_responses;
+
+    bool _pending_destroy;
+    int _context_count;
+
+    friend class UACTsx;
+  };
+
+  /// Class tracking the UAS-related state for a proxied transaction.
+  class UASTsxImpl : public UASTsx
+  {
+
+  public:
+    /// Constructor.
+    UASTsxImpl(BasicProxy* proxy);
+
+    /// Destructor.
+    virtual ~UASTsxImpl();
 
     /// Returns the name of the underlying PJSIP transaction.
     inline const char* name() { return (_tsx != NULL) ? _tsx->obj_name : "unknown"; }
@@ -143,15 +223,6 @@ protected:
 
     /// Cancels all pending UAC transactions associated with this UAS transaction.
     virtual void cancel_pending_uac_tsx(int st_code, bool dissociate_uac);
-
-    /// Enters this transaction's context.  While in the transaction's
-    /// context, it will not be destroyed.  Whenever enter_context is called,
-    /// exit_context must be called before the end of the method.
-    void enter_context();
-
-    /// Exits this transaction's context.  On return from this method, the caller
-    /// must not assume that the transaction still exists.
-    void exit_context();
 
     void trying_timer_expired();
     static void trying_timer_callback(pj_timer_heap_t *timer_heap, struct pj_timer_entry *entry);
@@ -205,18 +276,8 @@ protected:
     /// Compare SIP status codes.
     virtual int compare_sip_sc(int sc1, int sc2);
 
-    /// Disassociates the specified UAC transaction from this UAS transaction,
-    /// and vice-versa.  This must be called before destroying either transaction.
-    void dissociate(UACTsx* uac_tsx);
-
     /// Creates a new downstream UACTsx object for this transaction.
     virtual BasicProxy::UACTsx* create_uac_tsx(size_t index);
-
-    /// Returns the SAS trail identifier attached to the transaction.
-    SAS::TrailId trail() const { return _trail; }
-
-    /// Owning proxy object.
-    BasicProxy* _proxy;
 
     /// A pointer to the original request.  This is valid throughout the
     /// lifetime of this object, so can be used to retry the request or fork
@@ -226,31 +287,12 @@ protected:
     /// Pointer to the underlying PJSIP UAS transaction.
     pjsip_transaction* _tsx;
 
-    /// PJSIP group lock used to protect all PJSIP UAS and UAC transactions
-    /// involved in this proxied request.
-    pj_grp_lock_t* _lock;
-
-    /// The trail identifier for the transaction/request.
-    SAS::TrailId _trail;
-
     /// Targets the request is forked to.
     std::list<Target*> _targets;
-
-    /// Associated UACTsx objects for each forked request.
-    std::vector<UACTsx*> _uac_tsx;
-
-    /// Count of targets the request is about to be forked to.
-    size_t _pending_sends;
-
-    /// Count of targets the request was forked to that have yet to respond.
-    size_t _pending_responses;
 
     /// A pointer to the best final response received so far.  This is
     /// initialised to a 408 Request Timeout response.
     pjsip_tx_data* _final_rsp;
-
-    bool _pending_destroy;
-    int _context_count;
 
     pj_timer_entry       _trying_timer;
     static const int     TRYING_TIMER = 1;
@@ -362,6 +404,7 @@ protected:
     int _context_count;
 
     friend class UASTsx;
+    friend class UASTsxImpl;
 
     static const int TIMER_C = 3;
   };

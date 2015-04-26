@@ -444,7 +444,7 @@ void SproutletProxy::on_timer_pop(SproutletProxy::UASTsx* uas_tsx,
 }
 
 SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
-  BasicProxy::UASTsx(proxy),
+  BasicProxy::UASTsxImpl(proxy),
   _root(NULL),
   _dmap_sproutlet(),
   _dmap_uac(),
