@@ -300,7 +300,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
                                                   trail());
   // TODO Check and log response
 
-  std::string room_alias = from_matrix-user + "-" + to_matrix_user;
+  std::string room_alias = from_matrix_user + "-" + to_matrix_user;
   rc = _config.connection->get_room_for_alias(room_alias,
                                               _room_id,
                                               trail());
