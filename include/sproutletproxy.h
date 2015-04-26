@@ -125,7 +125,7 @@ protected:
                     SproutletWrapper* sproutlet_wrapper,
                     void* context);
 
-  class UASTsx : public BasicProxy::UASTsx
+  class UASTsx : public BasicProxy::UASTsxImpl
   {
   public:
     /// Constructor.
@@ -228,7 +228,7 @@ protected:
 
   static const pj_str_t STR_SERVICE;
 
-  friend class UASTsx;
+  friend class BasicProxy::UASTsx;
   friend class SproutletWrapper;
 };
 
