@@ -190,10 +190,10 @@ protected:
   }
 
 private:
-  class UASTsx : public BasicProxy::UASTsx
+  class UASTsx : public BasicProxy::UASTsxImpl
   {
     UASTsx(BasicProxyUT* proxy) :
-      BasicProxy::UASTsx((BasicProxy*)proxy)
+      BasicProxy::UASTsxImpl((BasicProxy*)proxy)
     {
     }
 
@@ -201,7 +201,7 @@ private:
     virtual int calculate_targets()
     {
       // Invoke the standard function first.
-      int status_code = BasicProxy::UASTsx::calculate_targets();
+      int status_code = BasicProxy::UASTsxImpl::calculate_targets();
 
       if (status_code == PJSIP_SC_NOT_FOUND)
       {

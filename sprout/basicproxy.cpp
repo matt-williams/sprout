@@ -581,6 +581,13 @@ BasicProxy::UASTsxImpl::~UASTsxImpl()
 /// Initializes the UASTsx object to handle proxying of the request.
 pj_status_t BasicProxy::UASTsxImpl::init(pjsip_rx_data* rdata)
 {
+  // Do the BasicProxy initialization first.
+  pj_status_t status = BasicProxy::UASTsx::init(rdata);
+  if (status != PJ_SUCCESS)
+  {
+    return status;
+  }
+
   _trail = get_trail(rdata);
 
   // initialise deferred trying timer
