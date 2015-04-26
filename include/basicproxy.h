@@ -110,7 +110,7 @@ protected:
     virtual ~UASTsx();
 
     /// Initializes the UAS transaction.
-    virtual pj_status_t init(pjsip_rx_data* rdata) { return PJ_SUCCESS; };
+    virtual pj_status_t init(pjsip_rx_data* rdata);
 
     /// Handle the incoming half of a transaction request.
     virtual void process_tsx_request(pjsip_rx_data* rdata) = 0;
@@ -151,6 +151,12 @@ protected:
     SAS::TrailId trail() const { return _trail; }
 
   protected:
+    /// Called when a new transaction is starting.
+    void on_tsx_start(const pjsip_rx_data* rdata);
+
+    /// Called when a transaction completes.
+    void on_tsx_complete();
+
     /// Disassociates the specified UAC transaction from this UAS transaction,
     /// and vice-versa.  This must be called before destroying either transaction.
     void dissociate(UACTsx* uac_tsx);
@@ -164,6 +170,11 @@ protected:
 
     /// The trail identifier for the transaction/request.
     SAS::TrailId _trail;
+
+    /// A pointer to the original request.  This is valid throughout the
+    /// lifetime of this object, so can be used to retry the request or fork
+    /// to additional targets if required.
+    pjsip_tx_data* _req;
 
     /// Associated UACTsx objects for each forked request.
     std::vector<UACTsx*> _uac_tsx;
@@ -269,22 +280,11 @@ protected:
     virtual void send_response(int st_code,
                                const pj_str_t* st_text=NULL);
 
-    /// Called when a new transaction is starting.
-    virtual void on_tsx_start(const pjsip_rx_data* rdata);
-
-    /// Called when a transaction completes.
-    virtual void on_tsx_complete();
-
     /// Compare SIP status codes.
     virtual int compare_sip_sc(int sc1, int sc2);
 
     /// Creates a new downstream UACTsx object for this transaction.
     virtual BasicProxy::UACTsx* create_uac_tsx(size_t index);
-
-    /// A pointer to the original request.  This is valid throughout the
-    /// lifetime of this object, so can be used to retry the request or fork
-    /// to additional targets if required.
-    pjsip_tx_data* _req;
 
     /// Pointer to the underlying PJSIP UAS transaction.
     pjsip_transaction* _tsx;

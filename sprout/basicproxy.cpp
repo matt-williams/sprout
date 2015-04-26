@@ -413,11 +413,21 @@ void BasicProxy::reject_request(pjsip_rx_data* rdata, int status_code)
 }
 
 
+/// Creates a UASTsx object.
+// LCOV_EXCL_START - Overriden in UT
+BasicProxy::UASTsx* BasicProxy::create_uas_tsx()
+{
+  return new UASTsxImpl(this);
+}
+// LCOV_EXCL_STOP
+
+
 /// UAS Transaction constructor
 BasicProxy::UASTsx::UASTsx(BasicProxy* proxy) :
   _proxy(proxy),
   _lock(NULL),
   _trail(0),
+  _req(NULL),
   _uac_tsx(),
   _pending_sends(0),
   _pending_responses(0),
@@ -457,13 +467,30 @@ BasicProxy::UASTsx::~UASTsx()
 }
 
 
-/// Creates a UASTsx object.
-// LCOV_EXCL_START - Overriden in UT
-BasicProxy::UASTsx* BasicProxy::create_uas_tsx()
+/// Initializes the UASTsx object to handle proxying of the request.
+pj_status_t BasicProxy::UASTsx::init(pjsip_rx_data* rdata)
 {
-  return new UASTsxImpl(this);
+  _trail = get_trail(rdata);
+
+  // Do any start of transaction logging operations.
+  on_tsx_start(rdata);
+
+  _req = PJUtils::clone_msg(stack_data.endpt, rdata);
+  if (_req == NULL)
+  {
+    // LCOV_EXCL_START - no UT for forcing PJSIP errors.
+    LOG_ERROR("Failed to clone received request");
+    on_tsx_complete();
+    _pending_destroy = true;
+    return PJ_ENOMEM;
+    // LCOV_EXCL_STOP
+  }
+
+  // Enter the context of this object so the context count gets incremented.
+  enter_context();
+
+  return PJ_SUCCESS;
 }
-// LCOV_EXCL_STOP
 
 
 /// Disassociates the specified UAC transaction from this UAS transaction, and
@@ -521,11 +548,44 @@ void BasicProxy::UASTsx::exit_context()
   }
 }
 
+/// Perform actions on a new transaction starting.
+void BasicProxy::UASTsx::on_tsx_start(const pjsip_rx_data* rdata)
+{
+  // Report SAS markers for the transaction.
+  LOG_DEBUG("Report SAS start marker - trail (%llx)", trail());
+  SAS::Marker start_marker(trail(), MARKER_ID_START, 1u);
+  SAS::report_marker(start_marker);
+
+  PJUtils::report_sas_to_from_markers(trail(), rdata->msg_info.msg);
+
+  if ((rdata->msg_info.msg->line.req.method.id == PJSIP_REGISTER_METHOD) ||
+      ((pjsip_method_cmp(&rdata->msg_info.msg->line.req.method, pjsip_get_subscribe_method())) == 0) ||
+      ((pjsip_method_cmp(&rdata->msg_info.msg->line.req.method, pjsip_get_notify_method())) == 0))
+  {
+    // Omit the Call-ID for these requests, as the same Call-ID can be
+    // reused over a long period of time and produce huge SAS trails.
+    PJUtils::mark_sas_call_branch_ids(trail(), NULL, rdata->msg_info.msg);
+  }
+  else
+  {
+    PJUtils::mark_sas_call_branch_ids(trail(), rdata->msg_info.cid, rdata->msg_info.msg);
+  }
+}
+
+
+/// Perform actions on a transaction completing.
+void BasicProxy::UASTsx::on_tsx_complete()
+{
+  // Report SAS markers for the transaction.
+  LOG_DEBUG("Report SAS end marker - trail (%llx)", trail());
+  SAS::Marker end_marker(trail(), MARKER_ID_END, 1u);
+  SAS::report_marker(end_marker);
+}
+
 
 /// UAS Transaction constructor
 BasicProxy::UASTsxImpl::UASTsxImpl(BasicProxy* proxy) :
   UASTsx(proxy),
-  _req(NULL),
   _tsx(NULL),
   _targets(),
   _final_rsp(NULL)
@@ -588,26 +648,10 @@ pj_status_t BasicProxy::UASTsxImpl::init(pjsip_rx_data* rdata)
     return status;
   }
 
-  _trail = get_trail(rdata);
-
   // initialise deferred trying timer
   pthread_mutex_init(&_trying_timer_lock, NULL);
   pj_timer_entry_init(&_trying_timer, 0, (void*)this, &trying_timer_callback);
   _trying_timer.id = 0;
-
-  // Do any start of transaction logging operations.
-  on_tsx_start(rdata);
-
-  _req = PJUtils::clone_msg(stack_data.endpt, rdata);
-  if (_req == NULL)
-  {
-    // LCOV_EXCL_START - no UT for forcing PJSIP errors.
-    LOG_ERROR("Failed to clone received request");
-    on_tsx_complete();
-    _pending_destroy = true;
-    return PJ_ENOMEM;
-    // LCOV_EXCL_STOP
-  }
 
   if (rdata->msg_info.msg->line.req.method.id != PJSIP_ACK_METHOD)
   {
@@ -656,8 +700,6 @@ pj_status_t BasicProxy::UASTsxImpl::init(pjsip_rx_data* rdata)
   else
   {
     // ACK will be forwarded statelessly, so we don't need a PJSIP transaction.
-    // Enter the context of this object so the context count gets incremented.
-    enter_context();
   }
 
   return PJ_SUCCESS;
@@ -866,8 +908,7 @@ pj_status_t BasicProxy::UASTsxImpl::create_pjsip_transaction(pjsip_rx_data* rdat
   // Bind this object to the PJSIP transaction.
   _proxy->bind_transaction(this, _tsx);
 
-  // Enter the transaction's context, and then release our copy of the
-  // group lock, but don't decrement the reference count as we need to leave
+  // Release our copy of the group lock.  Don't exit context as we need to leave
   // a reference corresponding to this UASTsx structure.
   enter_context();
   pj_grp_lock_release(_lock);
@@ -1315,41 +1356,6 @@ void BasicProxy::UASTsxImpl::on_tx_response(pjsip_tx_data* tdata)
 /// transaction.
 void BasicProxy::UASTsxImpl::on_tx_client_request(pjsip_tx_data* tdata, UACTsx* uac_tsx)
 {
-}
-
-
-/// Perform actions on a new transaction starting.
-void BasicProxy::UASTsxImpl::on_tsx_start(const pjsip_rx_data* rdata)
-{
-  // Report SAS markers for the transaction.
-  LOG_DEBUG("Report SAS start marker - trail (%llx)", trail());
-  SAS::Marker start_marker(trail(), MARKER_ID_START, 1u);
-  SAS::report_marker(start_marker);
-
-  PJUtils::report_sas_to_from_markers(trail(), rdata->msg_info.msg);
-
-  if ((rdata->msg_info.msg->line.req.method.id == PJSIP_REGISTER_METHOD) ||
-      ((pjsip_method_cmp(&rdata->msg_info.msg->line.req.method, pjsip_get_subscribe_method())) == 0) ||
-      ((pjsip_method_cmp(&rdata->msg_info.msg->line.req.method, pjsip_get_notify_method())) == 0))
-  {
-    // Omit the Call-ID for these requests, as the same Call-ID can be
-    // reused over a long period of time and produce huge SAS trails.
-    PJUtils::mark_sas_call_branch_ids(trail(), NULL, rdata->msg_info.msg);
-  }
-  else
-  {
-    PJUtils::mark_sas_call_branch_ids(trail(), rdata->msg_info.cid, rdata->msg_info.msg);
-  }
-}
-
-
-/// Perform actions on a transaction completing.
-void BasicProxy::UASTsxImpl::on_tsx_complete()
-{
-  // Report SAS markers for the transaction.
-  LOG_DEBUG("Report SAS end marker - trail (%llx)", trail());
-  SAS::Marker end_marker(trail(), MARKER_ID_END, 1u);
-  SAS::report_marker(end_marker);
 }
 
 
