@@ -466,7 +466,7 @@ SproutletProxy::UASTsx::~UASTsx()
 pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
 {
   // Do the BasicProxy initialization first.
-  pj_status_t status = BasicProxy::UASTsx::init(rdata);
+  pj_status_t status = BasicProxy::UASTsxImpl::init(rdata);
 
   if (status == PJ_SUCCESS)
   {
