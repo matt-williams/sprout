@@ -300,14 +300,29 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
                                                   trail());
   // TODO Check and log response
 
-  std::vector<std::string> invites;
-  invites.push_back(to_matrix_user);
-  rc = _config.connection->create_room(from_matrix_user,
-                                       "Call from " + PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, from_uri),
-                                       "", // Work around Matrix issue - should be "call-" + matrix_call_id,
-                                       invites,
-                                       _room_id,
-                                       trail());
+  std::string room_alias = from_matrix_user + "-" + to_matrix_user;
+  rc = _config.connection->get_room_for_alias(room_alias,
+                                              _room_id,
+                                              trail());
+  // TODO Check and log response
+
+  if (_room_id.empty())
+  {
+    std::vector<std::string> invites;
+    invites.push_back(to_matrix_user);
+    rc = _config.connection->create_room(from_matrix_user,
+                                         "Call from " + PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, from_uri),
+                                         "",
+                                         invites,
+                                         _room_id,
+                                         trail());
+
+    // Work around https://matrix.org/jira/browse/SYN-340 by creating alias manually.
+    rc = _config.connection->create_alias(_room_id,
+                                          room_alias,
+                                          trail());
+  }
+
   _config.matrix->add_tsx(_room_id, this);
 
   //std::string call_candidates_event = _config.connection->build_call_candidates_event(call_id,
