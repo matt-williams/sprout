@@ -76,15 +76,19 @@ bool MatrixPlugin::load(struct options& opt, std::list<Sproutlet*>& sproutlets)
 {
   bool plugin_loaded = true;
 
-  // Create the Sproutlet.
-  _matrix = new Matrix(opt.matrix_home_server,
-                       opt.matrix_as_token,
-                       http_resolver,
-                       opt.http_address + ":" + std::to_string(opt.http_port),
-                       load_monitor,
-                       stack_data.stats_aggregator);
+  if ((!opt.matrix_home_server.empty()) &&
+      (!opt.matrix_as_token.empty()))
+  {
+    // Create the Sproutlet.
+    _matrix = new Matrix(opt.matrix_home_server,
+                         opt.matrix_as_token,
+                         http_resolver,
+                         opt.http_address + ":" + std::to_string(opt.http_port),
+                         load_monitor,
+                         stack_data.stats_aggregator);
 
-  sproutlets.push_back(_matrix);
+    sproutlets.push_back(_matrix);
+  }
 
   return plugin_loaded;
 }
