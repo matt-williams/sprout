@@ -300,7 +300,11 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
                                                   trail());
   // TODO Check and log response
 
-  std::string room_alias = from_matrix_user + "-" + to_matrix_user;
+  std::string from_alias = from_matrix_user.substr(1);
+  from_alias = from_alias.replace(from_alias.find(":"), 1, "-");
+  std::string to_alias = to_matrix_user.substr(1);
+  to_alias = to_alias.replace(to_alias.find(":"), 1, "-"); 
+  std::string room_alias = "#" + from_alias + "-" + to_alias + ":" + _config.home_server;
   rc = _config.connection->get_room_for_alias(room_alias,
                                               _room_id,
                                               trail());
@@ -321,6 +325,19 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
     rc = _config.connection->create_alias(_room_id,
                                           room_alias,
                                           trail());
+  }
+  else
+  {
+    // TODO Get members and, if not already a member, invite them
+
+    std::string call_invite_event = _config.connection->build_call_invite_event(_call_id,
+                                                                                _offer_sdp,
+                                                                                _expires * 1000);
+    rc = _config.connection->send_event(_from_matrix_user,
+                                        _room_id,
+                                        MatrixConnection::EVENT_TYPE_CALL_INVITE,
+                                        call_invite_event,
+                                        trail());
   }
 
   _config.matrix->add_tsx(_room_id, this);

@@ -253,10 +253,11 @@ HTTPCode MatrixConnection::get_room_for_alias(const std::string& alias,
                                               std::string& id,
                                               SAS::TrailId trail)
 {
-  std::string path = "/_matrix/client/api/v1/directory/room/" + alias + "?access_token=" + _as_token;
+  // TODO URL-encode # properly
+  std::string path = "/_matrix/client/api/v1/directory/room/%23" + alias.substr(1) + "?access_token=" + _as_token;
   std::string response;
 
-  HTTPCode rc = _http.send_get(path, response, NULL, trail);
+  HTTPCode rc = _http.send_get(path, response, "", trail);
 
   if (rc == HTTP_OK)
   {
@@ -266,7 +267,6 @@ HTTPCode MatrixConnection::get_room_for_alias(const std::string& alias,
   {
     // TODO Parse error response
   }
-
 
   return rc;
 }
@@ -389,7 +389,8 @@ HTTPCode MatrixConnection::create_alias(const std::string& id,
                                         const std::string& alias,
                                         const SAS::TrailId trail)
 {
-  std::string path = "/_matrix/client/api/v1/directory/room/" + alias + "?access_token=" + _as_token;
+  // TODO URL-encode # properly
+  std::string path = "/_matrix/client/api/v1/directory/room/%23" + alias.substr(1) + "?access_token=" + _as_token;
   std::map<std::string,std::string> headers;
   std::string response;
   std::string body = build_create_alias_req(id);
