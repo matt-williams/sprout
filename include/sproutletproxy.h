@@ -79,6 +79,7 @@ public:
 
 protected:
   /// Pre-declaration
+  class UASTsxMixin;
   class UASTsx;
 
   /// Create Sproutlet UAS transaction objects.
@@ -109,83 +110,68 @@ protected:
   struct SproutletTimerCallbackData
   {
     SproutletProxy* proxy;
-    SproutletProxy::UASTsx* uas_tsx;
+    SproutletProxy::UASTsxMixin* uas_tsx_mixin;
     SproutletWrapper* sproutlet_wrapper;
     void* context;
   };
 
-  bool schedule_timer(SproutletProxy::UASTsx* uas_tsx,
+  bool schedule_timer(SproutletProxy::UASTsxMixin* uas_tsx_mixin,
                       SproutletWrapper* sproutlet_wrapper,
                       void* context,
                       TimerID& id,
                       int duration);
   void cancel_timer(TimerID id);
   bool timer_running(TimerID id);
-  void on_timer_pop(SproutletProxy::UASTsx* uas_tsx,
+  void on_timer_pop(SproutletProxy::UASTsxMixin* uas_tsx_mixin,
                     SproutletWrapper* sproutlet_wrapper,
                     void* context);
 
-  class UASTsx : public BasicProxy::UASTsxImpl
+  class UASTsxMixin
   {
   public:
-    /// Constructor.
-    UASTsx(SproutletProxy* proxy);
+    UASTsxMixin(SproutletProxy* proxy, SAS::TrailId trail);
 
-    /// Destructor.
-    virtual ~UASTsx();
-
-    /// Initializes the UAS transaction.
-    virtual pj_status_t init(pjsip_rx_data* rdata);
-
-    /// Handle the incoming half of a transaction request.
-    virtual void process_tsx_request(pjsip_rx_data* rdata);
-
-    /// Handle a received CANCEL request.
-    virtual void process_cancel_request(pjsip_rx_data* rdata);
-
-    /// Handle a timer pop.
-    void process_timer_pop(SproutletWrapper* tsx,
-                           void* context);
-
-  protected:
-    /// Handles a response to an associated UACTsx.
-    virtual void on_new_client_response(UACTsx* uac_tsx,
-                                        pjsip_tx_data *tdata);
-
-    /// Notification that an client transaction is not responding.
-    virtual void on_client_not_responding(UACTsx* uac_tsx,
-                                          pjsip_event_id_e event);
-
-    virtual void on_tsx_state(pjsip_event* event);
-
-
-  private:
-    void tx_request(SproutletWrapper* sproutlet,
-                    int fork_id,
-                    pjsip_tx_data* req);
-
-    void schedule_requests();
-
-    bool schedule_timer(SproutletWrapper* tsx, void* context, TimerID& id, int duration);
-    void cancel_timer(TimerID id);
-    bool timer_running(TimerID id);
-
-    void tx_response(SproutletWrapper* sproutlet,
-                     pjsip_tx_data* rsp);
-
-    void tx_cancel(SproutletWrapper* sproutlet,
-                   int fork_id,
-                   pjsip_tx_data* cancel);
+    pj_status_t create_sproutlet_wrapper(pjsip_tx_data* req, pjsip_rx_data* rdata);
 
     /// Gets the next target Sproutlet for the message by analysing the top
     /// Route header.
     Sproutlet* target_sproutlet(pjsip_msg* msg, int port, std::string& alias);
 
-    /// Checks to see if it is safe to destroy the UASTsx.
-    void check_destroy();
+    void handle_client_response(UACTsx* uac_tsx, pjsip_tx_data* rsp);
+    void handle_client_not_responding(UACTsx* uac_tsx, pjsip_event_id_e event);
+    void handle_tx_response(SproutletWrapper* downstream, pjsip_tx_data* rsp);
 
+    void tx_request(SproutletWrapper* sproutlet,
+                    int fork_id,
+                    pjsip_tx_data* req);
+
+    virtual void tx_response(SproutletWrapper* sproutlet,
+                             pjsip_tx_data* rsp) = 0;
+
+    void tx_cancel(SproutletWrapper* sproutlet,
+                   int fork_id,
+                   pjsip_tx_data* cancel);
+
+    bool schedule_timer(SproutletWrapper* tsx, void* context, TimerID& id, int duration);
+    void cancel_timer(TimerID id);
+    bool timer_running(TimerID id);
+
+    /// Handle a timer pop.
+    virtual void process_timer_pop(SproutletWrapper* tsx,
+                                   void* context) = 0;
+
+    bool can_destroy();
+    virtual pj_status_t create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx) = 0;
+
+    void schedule_requests();
+
+  protected:
     /// The root Sproutlet for this transaction.
     SproutletWrapper* _root;
+
+  private:
+    /// Parent proxy object
+    SproutletProxy* _sproutlet_proxy;
 
     /// Templated type used to map from upstream Sproutlet/fork to the
     /// downstream Sproutlet or UACTsx.
@@ -215,8 +201,51 @@ protected:
     } PendingRequest;
     std::queue<PendingRequest> _pending_req_q;
 
-    /// Parent proxy object
-    SproutletProxy* _sproutlet_proxy;
+    SAS::TrailId _trail;
+  };
+
+
+  class UASTsx : public BasicProxy::UASTsxImpl, public UASTsxMixin
+  {
+  public:
+    /// Constructor.
+    UASTsx(SproutletProxy* proxy);
+
+    /// Destructor.
+    virtual ~UASTsx();
+
+    /// Initializes the UAS transaction.
+    virtual pj_status_t init(pjsip_rx_data* rdata);
+
+    /// Handle the incoming half of a transaction request.
+    virtual void process_tsx_request(pjsip_rx_data* rdata);
+
+    /// Handle a received CANCEL request.
+    virtual void process_cancel_request(pjsip_rx_data* rdata);
+
+    /// Handle a timer pop.
+    virtual void process_timer_pop(SproutletWrapper* tsx,
+                                   void* context);
+
+  protected:
+    /// Handles a response to an associated UACTsx.
+    virtual void on_new_client_response(UACTsx* uac_tsx,
+                                        pjsip_tx_data *tdata);
+
+    /// Notification that an client transaction is not responding.
+    virtual void on_client_not_responding(UACTsx* uac_tsx,
+                                          pjsip_event_id_e event);
+
+    virtual void on_tsx_state(pjsip_event* event);
+
+
+  private:
+    virtual pj_status_t create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx);
+    virtual void tx_response(SproutletWrapper* sproutlet,
+                             pjsip_tx_data* rsp);
+
+    /// Checks to see if it is safe to destroy the UASTsx.
+    void check_destroy();
 
     friend class SproutletWrapper;
   };
@@ -238,7 +267,7 @@ class SproutletWrapper : public SproutletTsxHelper
 public:
   /// Constructor
   SproutletWrapper(SproutletProxy* proxy,
-                   SproutletProxy::UASTsx* proxy_tsx,
+                   SproutletProxy::UASTsxMixin* proxy_tsx,
                    Sproutlet* sproutlet,
                    const std::string& sproutlet_alias,
                    pjsip_tx_data* req,
@@ -296,7 +325,7 @@ private:
 
   SproutletProxy* _proxy;
 
-  SproutletProxy::UASTsx* _proxy_tsx;
+  SproutletProxy::UASTsxMixin* _proxy_tsx;
 
   Sproutlet* _sproutlet;
 
@@ -342,6 +371,7 @@ private:
 
   SAS::TrailId _trail_id;
 
+  friend class SproutletProxy::UASTsxMixin;
   friend class SproutletProxy::UASTsx;
 };
 
