@@ -85,6 +85,8 @@ public:
   void add_tsx(std::string room_id, MatrixTsx* tsx);
   void remove_tsx(std::string room_id);
 
+  MatrixConnection* connection() { return &_connection; }
+
 private:
   std::string _home_server;
   std::map<std::string,MatrixTsx*> _tsx_map;

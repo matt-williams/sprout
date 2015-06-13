@@ -123,8 +123,15 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
 void MatrixUserHandler::process_request(HttpStack::Request& req,
                                         SAS::TrailId trail)
 {
-  // TODO: Create user
+  // TODO: run in a separate thread/async
 
-  req.add_content("{}");
-  req.send_reply(HTTP_OK, trail);
+  const std::string prefix = "/matrix/users/%40";
+  std::string path = req.path();
+  std::string user = path.substr(prefix.length(), path.find_first_of("%", prefix.length()) - prefix.length());
+  HTTPCode rc = _matrix->connection()->register_user(user, trail);
+  if (rc == HTTP_OK)
+  {
+    req.add_content("{}");
+  }
+  req.send_reply(rc, trail);
 }
