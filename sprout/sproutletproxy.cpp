@@ -776,7 +776,7 @@ void SproutletProxy::UASTsxMixin::schedule_requests()
           }
 
           // Send the request.
-          _dmap_uac[req.upstream]->send_request();
+          uac_tsx->send_request();
         }
         else
         {
@@ -810,7 +810,7 @@ pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
 
   if (status == PJ_SUCCESS)
   {
-    create_sproutlet_wrapper(_req, rdata);
+    status = create_sproutlet_wrapper(_req, rdata);
   }
 
   return status;
