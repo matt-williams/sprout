@@ -573,6 +573,40 @@ void BasicProxy::UASTsx::on_tsx_start(const pjsip_rx_data* rdata)
 }
 
 
+/// Allocates and initializes a new UACTsx for the request.
+pj_status_t BasicProxy::UASTsx::allocate_uac(pjsip_tx_data* tdata,
+                                             size_t& index)
+{
+  // Create and initialize the UAC transaction.
+  index = _uac_tsx.size();
+  UACTsx* uac_tsx = create_uac_tsx(index);
+  pj_status_t status = (uac_tsx != NULL) ? uac_tsx->init(tdata) : PJ_ENOMEM;
+
+  if (status != PJ_SUCCESS)
+  {
+    // LCOV_EXCL_START
+    LOG_ERROR("Failed to create/initialize UAC transaction, %s",
+              PJUtils::pj_status_to_string(status).c_str());
+    delete uac_tsx;
+    // LCOV_EXCL_STOP
+  }
+  else
+  {
+    // Add the UAC transaction to the vector.
+    _uac_tsx.push_back(uac_tsx);
+  }
+
+  return status;
+}
+
+
+/// Creates a UACTsx object to send the request to a selected target.
+BasicProxy::UACTsx* BasicProxy::UASTsx::create_uac_tsx(size_t index)
+{
+  return new UACTsx(_proxy, this, index);
+}
+
+
 /// Perform actions on a transaction completing.
 void BasicProxy::UASTsx::on_tsx_complete()
 {
@@ -1069,33 +1103,6 @@ void BasicProxy::UASTsxImpl::set_req_target(pjsip_tx_data* tdata,
   }
 }
 
-/// Allocates and initializes a new UACTsx for the request.
-pj_status_t BasicProxy::UASTsxImpl::allocate_uac(pjsip_tx_data* tdata,
-                                             size_t& index)
-{
-  // Create and initialize the UAC transaction.
-  index = _uac_tsx.size();
-  UACTsx* uac_tsx = create_uac_tsx(index);
-  pj_status_t status = (uac_tsx != NULL) ? uac_tsx->init(tdata) : PJ_ENOMEM;
-
-  if (status != PJ_SUCCESS)
-  {
-    // LCOV_EXCL_START
-    LOG_ERROR("Failed to create/initialize UAC transaction, %s",
-              PJUtils::pj_status_to_string(status).c_str());
-    delete uac_tsx;
-    // LCOV_EXCL_STOP
-  }
-  else
-  {
-    // Add the UAC transaction to the vector.
-    _uac_tsx.push_back(uac_tsx);
-  }
-
-  return status;
-}
-
-
 /// Forwards a request creating a UACTsx to handle the downstream hop.
 pj_status_t BasicProxy::UASTsxImpl::forward_request(pjsip_tx_data* tdata,
                                                 size_t& index)
@@ -1473,13 +1480,6 @@ int BasicProxy::UASTsxImpl::compare_sip_sc(int sc1, int sc2)
   {
     return -1;
   }
-}
-
-
-/// Creates a UACTsx object to send the request to a selected target.
-BasicProxy::UACTsx* BasicProxy::UASTsxImpl::create_uac_tsx(size_t index)
-{
-  return new UACTsx(_proxy, this, index);
 }
 
 
