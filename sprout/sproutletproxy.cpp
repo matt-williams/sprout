@@ -87,7 +87,7 @@ void SproutletProxy::on_timer_pop(pj_timer_heap_t* th,
 {
   SproutletTimerCallbackData* tdata = (SproutletTimerCallbackData*)tentry->user_data;
   LOG_DEBUG("Sproutlet timer popped, id = %ld", (TimerID)tdata);
-  tdata->proxy->on_timer_pop(tdata->uas_tsx,
+  tdata->proxy->on_timer_pop(tdata->uas_tsx_mixin,
                              tdata->sproutlet_wrapper,
                              tdata->context);
   delete tentry;
@@ -386,7 +386,7 @@ bool SproutletProxy::is_host_local(const pj_str_t* host)
   return rc;
 }
 
-bool SproutletProxy::schedule_timer(SproutletProxy::UASTsx* uas_tsx,
+bool SproutletProxy::schedule_timer(SproutletProxy::UASTsxMixin* uas_tsx_mixin,
                                     SproutletWrapper* sproutlet_wrapper,
                                     void* context,
                                     TimerID& id,
@@ -396,7 +396,7 @@ bool SproutletProxy::schedule_timer(SproutletProxy::UASTsx* uas_tsx,
   memset(tentry, 0, sizeof(*tentry));
 
   SproutletTimerCallbackData* tdata = new SproutletTimerCallbackData;
-  tdata->uas_tsx = uas_tsx;
+  tdata->uas_tsx_mixin = uas_tsx_mixin;
   tdata->sproutlet_wrapper = sproutlet_wrapper;
   tdata->context = context;
   tentry->user_data = tdata;
@@ -435,140 +435,80 @@ bool SproutletProxy::timer_running(TimerID id)
 }
 
 
-void SproutletProxy::on_timer_pop(SproutletProxy::UASTsx* uas_tsx,
+void SproutletProxy::on_timer_pop(SproutletProxy::UASTsxMixin* uas_tsx_mixin,
                                   SproutletWrapper* sproutlet_wrapper,
                                   void* context)
 {
-  uas_tsx->process_timer_pop(sproutlet_wrapper,
-                             context);
+  uas_tsx_mixin->process_timer_pop(sproutlet_wrapper,
+                                   context);
 }
 
-SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
-  BasicProxy::UASTsxImpl(proxy),
+
+SproutletProxy::UASTsxMixin::UASTsxMixin(SproutletProxy* proxy, SAS::TrailId trail) :
   _root(NULL),
+  _sproutlet_proxy(proxy),
   _dmap_sproutlet(),
   _dmap_uac(),
   _umap(),
   _pending_req_q(),
-  _sproutlet_proxy(proxy)
+  _trail(trail)
 {
-  LOG_VERBOSE("Sproutlet Proxy transaction (%p) created", this);
+
 }
 
 
-SproutletProxy::UASTsx::~UASTsx()
+pj_status_t SproutletProxy::UASTsxMixin::create_sproutlet_wrapper(pjsip_tx_data* req, pjsip_rx_data* rdata)
 {
-  LOG_VERBOSE("Sproutlet Proxy transaction (%p) destroyed", this);
-}
+  pj_status_t status;
 
+  // Locate the target Sproutlet for the request, and create the helper and
+  // the Sproutlet transaction.
+  std::string alias;
+  Sproutlet* sproutlet =
+                 target_sproutlet(req->msg,
+                                  rdata->tp_info.transport->local_name.port,
+                                  alias);
 
-/// Initialise the UAS transaction object.
-pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
-{
-  // Do the BasicProxy initialization first.
-  pj_status_t status = BasicProxy::UASTsxImpl::init(rdata);
+  if (sproutlet == NULL)
+  {
+    // Failed to find a target Sproutlet for this request, so we need to
+    // decide what to do.
+    pjsip_route_hdr* route = (pjsip_route_hdr*)
+                pjsip_msg_find_hdr(rdata->msg_info.msg, PJSIP_H_ROUTE, NULL);
+    if (route != NULL)
+    {
+      // There is a top Route header in the request, which by definition
+      // caused the request to be routed to this node, so remove it and
+      // allow the request to be forwarded.
+      LOG_INFO("Remove top Route header and forward request");
+      pj_list_erase(route);
+    }
+    else
+    {
+      // There is no top Route header in the request, so forwarding it will
+      // result in a loop.  There is no option other than to reject the
+      // request.
+      LOG_INFO("Reject request");
+      status = PJ_ENOTSUP;
+    }
+  }
 
   if (status == PJ_SUCCESS)
   {
-    // Locate the target Sproutlet for the request, and create the helper and
-    // the Sproutlet transaction.
-    std::string alias;
-    Sproutlet* sproutlet =
-                   target_sproutlet(_req->msg,
-                                    rdata->tp_info.transport->local_name.port,
-                                    alias);
-
-    if (sproutlet == NULL)
-    {
-      // Failed to find a target Sproutlet for this request, so we need to
-      // decide what to do.
-      pjsip_route_hdr* route = (pjsip_route_hdr*)
-                  pjsip_msg_find_hdr(rdata->msg_info.msg, PJSIP_H_ROUTE, NULL);
-      if (route != NULL)
-      {
-        // There is a top Route header in the request, which by definition
-        // caused the request to be routed to this node, so remove it and
-        // allow the request to be forwarded.
-        LOG_INFO("Remove top Route header and forward request");
-        pj_list_erase(route);
-      }
-      else
-      {
-        // There is no top Route header in the request, so forwarding it will
-        // result in a loop.  There is no option other than to reject the
-        // request.
-        LOG_INFO("Reject request");
-        status = PJ_ENOTSUP;
-      }
-    }
-
-    if (status == PJ_SUCCESS)
-    {
-      _root = new SproutletWrapper(_sproutlet_proxy,
-                                   this,
-                                   sproutlet,
-                                   alias,
-                                   _req,
-                                   trail());
-    }
+    _root = new SproutletWrapper(_sproutlet_proxy,
+                                 this,
+                                 sproutlet,
+                                 alias,
+                                 req,
+                                 _trail);
   }
 
   return status;
 }
 
 
-/// Handle the incoming half of a transaction request.
-void SproutletProxy::UASTsx::process_tsx_request(pjsip_rx_data* rdata)
+void SproutletProxy::UASTsxMixin::handle_client_response(UACTsx* uac_tsx, pjsip_tx_data* rsp)
 {
-  // Pass the request to the Sproutlet at the root of the tree.
-  pjsip_tx_data_add_ref(_req);
-  _root->rx_request(_req);
-
-  // Schedule any requests generated by the Sproutlet.
-  schedule_requests();
-}
-
-
-/// Handle a received CANCEL request.
-void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata)
-{
-  // We may receive a CANCEL after sending a final response, so check that
-  // the root Sproutlet is still connected.
-  if (_root != NULL)
-  {
-    // Pass the CANCEL to the Sproutlet at the root of the tree.
-    pjsip_tx_data* tdata = PJUtils::clone_msg(stack_data.endpt, rdata);
-    _root->rx_cancel(tdata);
-
-    // Schedule any requests generated by the Sproutlet.
-    schedule_requests();
-  }
-}
-
-
-/// Handle a timer expiring.
-void SproutletProxy::UASTsx::process_timer_pop(SproutletWrapper* sproutlet_wrapper,
-                                               void* context)
-{
-  enter_context();
-  sproutlet_wrapper->on_timer_pop(context);
-  schedule_requests();
-  exit_context();
-}
-
-
-/// Handles a response to an associated UACTsx.
-void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
-                                                    pjsip_tx_data *rsp)
-{
-  enter_context();
-
-  if (rsp->msg->line.status.code >= PJSIP_SC_OK)
-  {
-    // This is a final response, so dissociate the UAC transaction.
-    dissociate(uac_tsx);
-  }
-
   UMap::iterator i = _umap.find((void*)uac_tsx);
 
   if (i != _umap.end())
@@ -585,9 +525,6 @@ void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
       _umap.erase(i);
     }
     upstream_sproutlet->rx_response(rsp, upstream_fork);
-
-    // Schedule any requests generated by the Sproutlet.
-    schedule_requests();
   }
   else
   {
@@ -596,20 +533,12 @@ void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
     pjsip_tx_data_dec_ref(rsp);
     //LCOV_EXCL_STOP
   }
-
-  exit_context();
 }
 
 
-/// Handles a response to an associated UACTsx.
-void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
-                                                      pjsip_event_id_e event)
+void SproutletProxy::UASTsxMixin::handle_client_not_responding(UACTsx* uac_tsx,
+                                                               pjsip_event_id_e event)
 {
-  enter_context();
-
-  // This is equivalent to a final response, so dissociate the UAC transaction.
-  dissociate(uac_tsx);
-
   UMap::iterator i = _umap.find((void*)uac_tsx);
 
   if (i != _umap.end())
@@ -624,73 +553,13 @@ void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
     _umap.erase(i);
 
     upstream_sproutlet->rx_fork_error(event, upstream_fork);
-
-    // Schedule any requests generated by the Sproutlet.
-    schedule_requests();
   }
-
-  exit_context();
 }
 
 
-/// Notification that the underlying PJSIP UAS transaction has changed state.
-///
-/// After calling this, the caller must not assume that the UASTsx still
-/// exists - if the PJSIP transaction is being destroyed, this method will
-/// destroy the UASTsx.
-void SproutletProxy::UASTsx::on_tsx_state(pjsip_event* event)
-{
-  enter_context();
-
-  if (_tsx->state == PJSIP_TSX_STATE_TERMINATED)
-  {
-    // UAS transaction has completed, so do any transaction completion
-    // activities.
-    on_tsx_complete();
-  }
-
-  if ((_root != NULL) &&
-      (_tsx->state == PJSIP_TSX_STATE_TERMINATED) &&
-      ((event->body.tsx_state.type == PJSIP_EVENT_TIMER) ||
-       (event->body.tsx_state.type == PJSIP_EVENT_TRANSPORT_ERROR)))
-  {
-    // Notify the root Sproutlet of the error.
-    LOG_DEBUG("Pass error to Sproutlet %p", _root);
-    _root->rx_error(PJSIP_SC_REQUEST_TIMEOUT);
-
-    // Schedule any requests generated by the Sproutlet.
-    schedule_requests();
-
-    // The root Sproutlet may suicide at any time now, so don't send anything
-    // else to it.
-    _root = NULL;
-  }
-
-  if (_tsx->state == PJSIP_TSX_STATE_DESTROYED)
-  {
-    LOG_DEBUG("%s - UAS tsx destroyed", _tsx->obj_name);
-    _proxy->unbind_transaction(_tsx);
-    _tsx = NULL;
-
-    // Check to see if we can destroy the UASTsx.
-    check_destroy();
-  }
-
-  exit_context();
-}
-
-
-Sproutlet* SproutletProxy::UASTsx::target_sproutlet(pjsip_msg* msg,
-                                                    int port,
-                                                    std::string& alias)
-{
-  return _sproutlet_proxy->target_sproutlet(msg, port, alias);
-}
-
-
-void SproutletProxy::UASTsx::tx_request(SproutletWrapper* upstream,
-                                        int fork_id,
-                                        pjsip_tx_data* req)
+void SproutletProxy::UASTsxMixin::tx_request(SproutletWrapper* upstream,
+                                             int fork_id,
+                                             pjsip_tx_data* req)
 {
   // Add the request to the back of the pending request queue.
   PendingRequest pr;
@@ -700,7 +569,110 @@ void SproutletProxy::UASTsx::tx_request(SproutletWrapper* upstream,
 }
 
 
-void SproutletProxy::UASTsx::schedule_requests()
+void SproutletProxy::UASTsxMixin::handle_tx_response(SproutletWrapper* downstream, pjsip_tx_data* rsp)
+{
+  // Find the upstream Sproutlet/fork for this sproutlet.
+  UMap::iterator i = _umap.find((void*)downstream);
+  if (i != _umap.end())
+  {
+    // Found the upstream Sproutlet/fork, so pass the request.
+    SproutletWrapper* upstream = i->second.first;
+    int fork_id = i->second.second;
+
+    if (rsp->msg->line.status.code >= PJSIP_SC_OK)
+    {
+      // Final response, so break the linkage between the Sproutlets.
+      _dmap_sproutlet.erase(i->second);
+      _umap.erase(i);
+    }
+    upstream->rx_response(rsp, fork_id);
+  }
+  else
+  {
+    // Failed to find the upstream Sproutlet, so discard the response.
+    //LCOV_EXCL_START
+    LOG_DEBUG("Discard response %s (%s)", pjsip_tx_data_get_info(rsp), rsp->obj_name);
+    pjsip_tx_data_dec_ref(rsp);
+    //LCOV_EXCL_STOP
+  }
+}
+
+void SproutletProxy::UASTsxMixin::tx_cancel(SproutletWrapper* upstream,
+                                            int fork_id,
+                                            pjsip_tx_data* cancel)
+{
+  LOG_DEBUG("Process CANCEL from %s on fork %d",
+            upstream->service_name().c_str(), fork_id);
+  DMap<SproutletWrapper*>::iterator i =
+                       _dmap_sproutlet.find(std::make_pair(upstream, fork_id));
+
+  if (i != _dmap_sproutlet.end())
+  {
+    // Pass the CANCEL request to the downstream Sproutlet.
+    SproutletWrapper* downstream = i->second;
+    LOG_DEBUG("Route CANCEL to %s", downstream->service_name().c_str());
+    downstream->rx_cancel(cancel);
+  }
+  else
+  {
+    DMap<UACTsx*>::iterator j = _dmap_uac.find(std::make_pair(upstream, fork_id));
+    if (j != _dmap_uac.end())
+    {
+      // CANCEL the downstream UAC transaction.
+      LOG_DEBUG("Route CANCEL to downstream UAC transaction");
+      UACTsx* uac_tsx = j->second;
+      uac_tsx->cancel_pending_tsx(0);
+    }
+
+    // Free the CANCEL request.
+    LOG_DEBUG("Free CANCEL request (%s)", cancel->obj_name);
+    pjsip_tx_data_dec_ref(cancel);
+  }
+}
+
+
+bool SproutletProxy::UASTsxMixin::schedule_timer(SproutletWrapper* tsx,
+                                                 void* context,
+                                                 TimerID& id,
+                                                 int duration)
+{
+  return _sproutlet_proxy->schedule_timer(this,
+                                          tsx,
+                                          context,
+                                          id,
+                                          duration);
+}
+
+void SproutletProxy::UASTsxMixin::cancel_timer(TimerID id)
+{
+  _sproutlet_proxy->cancel_timer(id);
+}
+
+
+bool SproutletProxy::UASTsxMixin::timer_running(TimerID id)
+{
+  return _sproutlet_proxy->timer_running(id);
+}
+
+
+Sproutlet* SproutletProxy::UASTsxMixin::target_sproutlet(pjsip_msg* msg,
+                                                         int port,
+                                                         std::string& alias)
+{
+  return _sproutlet_proxy->target_sproutlet(msg, port, alias);
+}
+
+
+bool SproutletProxy::UASTsxMixin::can_destroy()
+{
+  return ((_dmap_uac.empty()) &&
+          (_dmap_sproutlet.empty()) &&
+          (_umap.empty()) &&
+          (_pending_req_q.empty()));
+}
+
+
+void SproutletProxy::UASTsxMixin::schedule_requests()
 {
   while (!_pending_req_q.empty())
   {
@@ -749,7 +721,7 @@ void SproutletProxy::UASTsx::schedule_requests()
                                                             sproutlet,
                                                             alias,
                                                             req.req,
-                                                            trail());
+                                                            _trail);
 
         // Set up the mappings.
         if (req.req->msg->line.req.method.id != PJSIP_ACK_METHOD)
@@ -781,9 +753,9 @@ void SproutletProxy::UASTsx::schedule_requests()
       {
         // No local Sproutlet, proxy the request.
         LOG_DEBUG("No local sproutlet matches request");
-        size_t index;
 
-        pj_status_t status = allocate_uac(req.req, index);
+        UACTsx* uac_tsx;
+        pj_status_t status = create_uac(req.req, uac_tsx);
 
         if (status == PJ_SUCCESS)
         {
@@ -791,12 +763,12 @@ void SproutletProxy::UASTsx::schedule_requests()
           // send the request.
           if (req.req->msg->line.req.method.id != PJSIP_ACK_METHOD)
           {
-            _dmap_uac[req.upstream] = _uac_tsx[index];
-            _umap[(void*)_uac_tsx[index]] = req.upstream;
+            _dmap_uac[req.upstream] = uac_tsx;
+            _umap[(void*)uac_tsx] = req.upstream;
           }
 
           // Send the request.
-          _uac_tsx[index]->send_request();
+          _dmap_uac[req.upstream]->send_request();
         }
         else
         {
@@ -805,33 +777,174 @@ void SproutletProxy::UASTsx::schedule_requests()
       }
     }
   }
+}
 
-  // Check to see if we can destroy the UASTsx.
+
+SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
+  BasicProxy::UASTsxImpl(proxy),
+  UASTsxMixin(proxy, trail())
+{
+  LOG_VERBOSE("Sproutlet Proxy transaction (%p) created", this);
+}
+
+
+SproutletProxy::UASTsx::~UASTsx()
+{
+  LOG_VERBOSE("Sproutlet Proxy transaction (%p) destroyed", this);
+}
+
+
+/// Initialise the UAS transaction object.
+pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
+{
+  // Do the BasicProxy initialization first.
+  pj_status_t status = BasicProxy::UASTsxImpl::init(rdata);
+
+  if (status == PJ_SUCCESS)
+  {
+    create_sproutlet_wrapper(_req, rdata);
+  }
+
+  return status;
+}
+
+
+/// Handle the incoming half of a transaction request.
+void SproutletProxy::UASTsx::process_tsx_request(pjsip_rx_data* rdata)
+{
+  // Pass the request to the Sproutlet at the root of the tree.
+  pjsip_tx_data_add_ref(_req);
+  _root->rx_request(_req);
+
+  // Schedule any requests generated by the Sproutlet.
+  schedule_requests();
   check_destroy();
 }
 
 
-bool SproutletProxy::UASTsx::schedule_timer(SproutletWrapper* tsx,
-                                            void* context,
-                                            TimerID& id,
-                                            int duration)
+/// Handle a received CANCEL request.
+void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata)
 {
-  return _sproutlet_proxy->schedule_timer(this,
-                                          tsx,
-                                          context,
-                                          id,
-                                          duration);
+  // We may receive a CANCEL after sending a final response, so check that
+  // the root Sproutlet is still connected.
+  if (_root != NULL)
+  {
+    // Pass the CANCEL to the Sproutlet at the root of the tree.
+    pjsip_tx_data* tdata = PJUtils::clone_msg(stack_data.endpt, rdata);
+    _root->rx_cancel(tdata);
+
+    // Schedule any requests generated by the Sproutlet.
+    schedule_requests();
+    check_destroy();
+  }
 }
 
-void SproutletProxy::UASTsx::cancel_timer(TimerID id)
+
+/// Handle a timer expiring.
+void SproutletProxy::UASTsx::process_timer_pop(SproutletWrapper* sproutlet_wrapper,
+                                               void* context)
 {
-  _sproutlet_proxy->cancel_timer(id);
+  enter_context();
+  sproutlet_wrapper->on_timer_pop(context);
+  schedule_requests();
+  check_destroy();
+  exit_context();
 }
 
 
-bool SproutletProxy::UASTsx::timer_running(TimerID id)
+/// Handles a response to an associated UACTsx.
+void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
+                                                    pjsip_tx_data* rsp)
 {
-  return _sproutlet_proxy->timer_running(id);
+  enter_context();
+
+  if (rsp->msg->line.status.code >= PJSIP_SC_OK)
+  {
+    // This is a final response, so dissociate the UAC transaction.
+    dissociate(uac_tsx);
+  }
+
+  handle_client_response(uac_tsx, rsp);
+  schedule_requests();
+  check_destroy();
+  exit_context();
+}
+
+
+/// Handles a response to an associated UACTsx.
+void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
+                                                      pjsip_event_id_e event)
+{
+  enter_context();
+  dissociate(uac_tsx);
+  handle_client_not_responding(uac_tsx, event);
+  schedule_requests();
+  check_destroy();
+  exit_context();
+}
+
+
+/// Notification that the underlying PJSIP UAS transaction has changed state.
+///
+/// After calling this, the caller must not assume that the UASTsx still
+/// exists - if the PJSIP transaction is being destroyed, this method will
+/// destroy the UASTsx.
+void SproutletProxy::UASTsx::on_tsx_state(pjsip_event* event)
+{
+  enter_context();
+
+  if (_tsx->state == PJSIP_TSX_STATE_TERMINATED)
+  {
+    // UAS transaction has completed, so do any transaction completion
+    // activities.
+    on_tsx_complete();
+  }
+
+  if ((_root != NULL) &&
+      (_tsx->state == PJSIP_TSX_STATE_TERMINATED) &&
+      ((event->body.tsx_state.type == PJSIP_EVENT_TIMER) ||
+       (event->body.tsx_state.type == PJSIP_EVENT_TRANSPORT_ERROR)))
+  {
+    // Notify the root Sproutlet of the error.
+    LOG_DEBUG("Pass error to Sproutlet %p", _root);
+    _root->rx_error(PJSIP_SC_REQUEST_TIMEOUT);
+
+    // Schedule any requests generated by the Sproutlet.
+    schedule_requests();
+    check_destroy();
+
+    // The root Sproutlet may suicide at any time now, so don't send anything
+    // else to it.
+    _root = NULL;
+  }
+
+  if (_tsx->state == PJSIP_TSX_STATE_DESTROYED)
+  {
+    LOG_DEBUG("%s - UAS tsx destroyed", _tsx->obj_name);
+    _proxy->unbind_transaction(_tsx);
+    _tsx = NULL;
+
+    // Check to see if we can destroy the UASTsx.
+    check_destroy();
+  }
+
+  exit_context();
+}
+
+
+pj_status_t SproutletProxy::UASTsx::create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx)
+{
+  size_t index;
+  pj_status_t status = allocate_uac(tdata, index);
+  if (status == PJ_SUCCESS)
+  {
+    uac_tsx = _uac_tsx[index];
+  }
+  else
+  {
+    uac_tsx = NULL;
+  }
+  return status;
 }
 
 
@@ -869,68 +982,11 @@ void SproutletProxy::UASTsx::tx_response(SproutletWrapper* downstream,
   }
   else
   {
-    // Find the upstream Sproutlet/fork for this sproutlet.
-    UMap::iterator i = _umap.find((void*)downstream);
-    if (i != _umap.end())
-    {
-      // Found the upstream Sproutlet/fork, so pass the request.
-      SproutletWrapper* upstream = i->second.first;
-      int fork_id = i->second.second;
-
-      if (rsp->msg->line.status.code >= PJSIP_SC_OK)
-      {
-        // Final response, so break the linkage between the Sproutlets.
-        _dmap_sproutlet.erase(i->second);
-        _umap.erase(i);
-      }
-      upstream->rx_response(rsp, fork_id);
-    }
-    else
-    {
-      // Failed to find the upstream Sproutlet, so discard the response.
-      //LCOV_EXCL_START
-      LOG_DEBUG("Discard response %s (%s)", pjsip_tx_data_get_info(rsp), rsp->obj_name);
-      pjsip_tx_data_dec_ref(rsp);
-      //LCOV_EXCL_STOP
-    }
+    handle_tx_response(downstream, rsp);
   }
 
   // Check to see if the UASTsx can be destroyed.
   check_destroy();
-}
-
-
-void SproutletProxy::UASTsx::tx_cancel(SproutletWrapper* upstream,
-                                       int fork_id,
-                                       pjsip_tx_data* cancel)
-{
-  LOG_DEBUG("Process CANCEL from %s on fork %d",
-            upstream->service_name().c_str(), fork_id);
-  DMap<SproutletWrapper*>::iterator i =
-                       _dmap_sproutlet.find(std::make_pair(upstream, fork_id));
-
-  if (i != _dmap_sproutlet.end())
-  {
-    // Pass the CANCEL request to the downstream Sproutlet.
-    SproutletWrapper* downstream = i->second;
-    LOG_DEBUG("Route CANCEL to %s", downstream->service_name().c_str());
-    downstream->rx_cancel(cancel);
-  }
-  else
-  {
-    DMap<UACTsx*>::iterator j = _dmap_uac.find(std::make_pair(upstream, fork_id));
-    if (j != _dmap_uac.end())
-    {
-      // CANCEL the downstream UAC transaction.
-      LOG_DEBUG("Route CANCEL to downstream UAC transaction");
-      UACTsx* uac_tsx = j->second;
-      uac_tsx->cancel_pending_tsx(0);
-    }
-
-    // Free the CANCEL request.
-    LOG_DEBUG("Free CANCEL request (%s)", cancel->obj_name);
-    pjsip_tx_data_dec_ref(cancel);
-  }
 }
 
 
@@ -939,10 +995,7 @@ void SproutletProxy::UASTsx::tx_cancel(SproutletWrapper* upstream,
 /// only occurs when all the linkages are broken.
 void SproutletProxy::UASTsx::check_destroy()
 {
-  if ((_dmap_uac.empty()) &&
-      (_dmap_sproutlet.empty()) &&
-      (_umap.empty()) &&
-      (_pending_req_q.empty()) &&
+  if (can_destroy() &&
       (_tsx == NULL))
   {
     // UAS transaction has been destroyed and all Sproutlets are complete.
@@ -957,7 +1010,7 @@ void SproutletProxy::UASTsx::check_destroy()
 //
 
 SproutletWrapper::SproutletWrapper(SproutletProxy* proxy,
-                                   SproutletProxy::UASTsx* proxy_tsx,
+                                   SproutletProxy::UASTsxMixin* proxy_tsx,
                                    Sproutlet* sproutlet,
                                    const std::string& sproutlet_alias,
                                    pjsip_tx_data* req,
