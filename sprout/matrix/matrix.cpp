@@ -71,23 +71,6 @@ Matrix::Matrix(const std::string& home_server,
   {
     LOG_ERROR("Caught HttpStack::Exception - %s - %d\n", e._func, e._rc);
   }
-
-  std::vector<std::string> user_regexs;
-  user_regexs.push_back("@tel_\\+?[0-9][0-9]*:.*");
-  user_regexs.push_back("@sip_.*:.*");
-  std::vector<std::string> alias_regexs;
-  alias_regexs.push_back("#call-.*:.*");
-  std::vector<std::string> room_regexs;
-  std::string hs_token;
-  HTTPCode rc = _connection.register_as("http://" + local_http + "/matrix", user_regexs, alias_regexs, room_regexs, hs_token);
-  if (rc == HTTP_OK)
-  {
-    LOG_INFO("Successfully registered AS - token: %s", hs_token.c_str());
-  }
-  else
-  {
-    LOG_INFO("Failed to register AS - rc = %lu", rc);
-  }
 }
 
 /// Creates a MatrixTsx instance.
