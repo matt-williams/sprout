@@ -55,6 +55,7 @@ Matrix::Matrix(const std::string& home_server,
   _home_server(home_server),
   _tsx_map(),
   _transaction_handler(this),
+  _user_handler(this),
   _connection(home_server,
               as_token,
               resolver,
@@ -66,6 +67,8 @@ Matrix::Matrix(const std::string& home_server,
   {
     http_stack->register_handler("^/matrix/transactions/$",
                                  &_transaction_handler);
+    http_stack->register_handler("^/matrix/users/$",
+                                 &_user_handler);
   }
   catch (HttpStack::Exception& e)
   {

@@ -46,7 +46,7 @@
 void MatrixTransactionHandler::process_request(HttpStack::Request& req,
                                                SAS::TrailId trail)
 {
-  HTTPCode rc = HTTP_OK;
+  HTTPCode rc;
 
   rapidjson::Document doc;
   doc.Parse<0>(req.get_rx_body().c_str());
@@ -103,6 +103,10 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
         LOG_DEBUG("Ignoring event of type %s in empty room %s", type.c_str(), room.c_str());
       }
     }
+
+    // Return 200 OK and an empty JSON object.
+    rc = HTTP_OK;
+    req.add_content("{}");
   }
   else
   {
@@ -111,4 +115,16 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
   }
 
   req.send_reply(rc, trail);
+}
+
+//
+// MatrixUserHandler methods.
+//
+void MatrixUserHandler::process_request(HttpStack::Request& req,
+                                        SAS::TrailId trail)
+{
+  // TODO: Create user
+
+  req.add_content("{}");
+  req.send_reply(rc, HTTP_OK);
 }
