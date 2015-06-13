@@ -155,6 +155,12 @@ protected:
     /// Called when a transaction completes.
     void on_tsx_complete();
 
+    /// Allocates and initializes a UAC transaction.
+    virtual pj_status_t allocate_uac(pjsip_tx_data* tdata, size_t& index);
+
+    /// Creates a new downstream UACTsx object for this transaction.
+    virtual BasicProxy::UACTsx* create_uac_tsx(size_t index);
+
     /// Disassociates the specified UAC transaction from this UAS transaction,
     /// and vice-versa.  This must be called before destroying either transaction.
     void dissociate(UACTsx* uac_tsx);
@@ -258,9 +264,6 @@ protected:
     /// Adds the target information to a request ready to send.
     virtual void set_req_target(pjsip_tx_data* tdata, BasicProxy::Target* target);
 
-    /// Allocates and initializes a UAC transaction.
-    virtual pj_status_t allocate_uac(pjsip_tx_data* tdata, size_t& index);
-
     /// Forwards a request, allocating and initializing the transaction.
     virtual pj_status_t forward_request(pjsip_tx_data* tdata, size_t& index);
 
@@ -280,9 +283,6 @@ protected:
 
     /// Compare SIP status codes.
     virtual int compare_sip_sc(int sc1, int sc2);
-
-    /// Creates a new downstream UACTsx object for this transaction.
-    virtual BasicProxy::UACTsx* create_uac_tsx(size_t index);
 
     /// Pointer to the underlying PJSIP UAS transaction.
     pjsip_transaction* _tsx;

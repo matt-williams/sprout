@@ -74,10 +74,14 @@ public:
   /// Static callback for timers
   static void on_timer_pop(pj_timer_heap_t* th, pj_timer_entry* tentry);
 
+  /// Create an internally-initiated Sproutlet UAS transaction object.
+  BasicProxy::UASTsx* create_int_uas_tsx();
+
 protected:
   /// Pre-declaration
   class UASTsxMixin;
-  class UASTsx;
+  class ExtUASTsx;
+  class IntUASTsx;
 
   /// Create Sproutlet UAS transaction objects.
   BasicProxy::UASTsx* create_uas_tsx();
@@ -201,15 +205,14 @@ protected:
     SAS::TrailId _trail;
   };
 
-
-  class UASTsx : public BasicProxy::UASTsxImpl, public UASTsxMixin
+  class ExtUASTsx : public BasicProxy::UASTsxImpl, public UASTsxMixin
   {
   public:
     /// Constructor.
-    UASTsx(SproutletProxy* proxy);
+    ExtUASTsx(SproutletProxy* proxy);
 
     /// Destructor.
-    virtual ~UASTsx();
+    virtual ~ExtUASTsx();
 
     /// Initializes the UAS transaction.
     virtual pj_status_t init(pjsip_rx_data* rdata);
@@ -235,14 +238,59 @@ protected:
 
     virtual void on_tsx_state(pjsip_event* event);
 
+  private:
+    virtual pj_status_t create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx);
+    virtual void tx_response(SproutletWrapper* sproutlet,
+                             pjsip_tx_data* rsp);
+
+    /// Checks to see if it is safe to destroy the ExtUASTsx.
+    void check_destroy();
+
+    friend class SproutletWrapper;
+  };
+
+  class IntUASTsx : public BasicProxy::UASTsx, public UASTsxMixin
+  {
+  public:
+    /// Constructor.
+    IntUASTsx(SproutletProxy* proxy);
+
+    /// Destructor.
+    virtual ~IntUASTsx();
+
+    /// Initializes the UAS transaction.
+    virtual pj_status_t init(pjsip_rx_data* rdata);
+
+    /// Handle the incoming half of a transaction request.
+    virtual void process_tsx_request(pjsip_rx_data* rdata);
+
+    /// Handle a received CANCEL request.
+    virtual void process_cancel_request(pjsip_rx_data* rdata);
+
+    /// Handle a timer pop.
+    virtual void process_timer_pop(SproutletWrapper* tsx,
+                                   void* context);
+
+    void terminate();
+
+  protected:
+    /// Handles a response to an associated UACTsx.
+    virtual void on_new_client_response(UACTsx* uac_tsx,
+                                        pjsip_tx_data *tdata);
+
+    /// Notification that an client transaction is not responding.
+    virtual void on_client_not_responding(UACTsx* uac_tsx,
+                                          pjsip_event_id_e event);
 
   private:
     virtual pj_status_t create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx);
     virtual void tx_response(SproutletWrapper* sproutlet,
                              pjsip_tx_data* rsp);
 
-    /// Checks to see if it is safe to destroy the UASTsx.
+    /// Checks to see if it is safe to destroy the ExtUASTsx.
     void check_destroy();
+
+    bool _user_terminated;
 
     friend class SproutletWrapper;
   };
@@ -254,7 +302,6 @@ protected:
 
   static const pj_str_t STR_SERVICE;
 
-  friend class BasicProxy::UASTsx;
   friend class SproutletWrapper;
 };
 
@@ -368,7 +415,8 @@ private:
   SAS::TrailId _trail_id;
 
   friend class SproutletProxy::UASTsxMixin;
-  friend class SproutletProxy::UASTsx;
+  friend class SproutletProxy::ExtUASTsx;
+  friend class SproutletProxy::IntUASTsx;
 };
 
 #endif

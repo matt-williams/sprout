@@ -95,10 +95,10 @@ void SproutletProxy::on_timer_pop(pj_timer_heap_t* th,
 }
 
 
-/// Utility method to create a UASTsx object for incoming requests.
+/// Utility method to create a ExtUASTsx object for incoming requests.
 BasicProxy::UASTsx* SproutletProxy::create_uas_tsx()
 {
-  return (BasicProxy::UASTsx*)new SproutletProxy::UASTsx(this);
+  return (BasicProxy::UASTsx*)new SproutletProxy::ExtUASTsx(this);
 }
 
 
@@ -115,7 +115,6 @@ Sproutlet* SproutletProxy::target_sproutlet(pjsip_msg* req,
   // Find and parse the top Route header.
   pjsip_route_hdr* route = (pjsip_route_hdr*)
                                   pjsip_msg_find_hdr(req, PJSIP_H_ROUTE, NULL);
-
 
   pjsip_sip_uri* uri = NULL;
   if (route == NULL)
@@ -780,7 +779,7 @@ void SproutletProxy::UASTsxMixin::schedule_requests()
 }
 
 
-SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
+SproutletProxy::ExtUASTsx::ExtUASTsx(SproutletProxy* proxy) :
   BasicProxy::UASTsxImpl(proxy),
   UASTsxMixin(proxy, trail())
 {
@@ -788,14 +787,14 @@ SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
 }
 
 
-SproutletProxy::UASTsx::~UASTsx()
+SproutletProxy::ExtUASTsx::~ExtUASTsx()
 {
   LOG_VERBOSE("Sproutlet Proxy transaction (%p) destroyed", this);
 }
 
 
 /// Initialise the UAS transaction object.
-pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
+pj_status_t SproutletProxy::ExtUASTsx::init(pjsip_rx_data* rdata)
 {
   // Do the BasicProxy initialization first.
   pj_status_t status = BasicProxy::UASTsxImpl::init(rdata);
@@ -810,7 +809,7 @@ pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
 
 
 /// Handle the incoming half of a transaction request.
-void SproutletProxy::UASTsx::process_tsx_request(pjsip_rx_data* rdata)
+void SproutletProxy::ExtUASTsx::process_tsx_request(pjsip_rx_data* rdata)
 {
   // Pass the request to the Sproutlet at the root of the tree.
   pjsip_tx_data_add_ref(_req);
@@ -823,7 +822,7 @@ void SproutletProxy::UASTsx::process_tsx_request(pjsip_rx_data* rdata)
 
 
 /// Handle a received CANCEL request.
-void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata)
+void SproutletProxy::ExtUASTsx::process_cancel_request(pjsip_rx_data* rdata)
 {
   // We may receive a CANCEL after sending a final response, so check that
   // the root Sproutlet is still connected.
@@ -841,8 +840,8 @@ void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata)
 
 
 /// Handle a timer expiring.
-void SproutletProxy::UASTsx::process_timer_pop(SproutletWrapper* sproutlet_wrapper,
-                                               void* context)
+void SproutletProxy::ExtUASTsx::process_timer_pop(SproutletWrapper* sproutlet_wrapper,
+                                                  void* context)
 {
   enter_context();
   sproutlet_wrapper->on_timer_pop(context);
@@ -853,8 +852,8 @@ void SproutletProxy::UASTsx::process_timer_pop(SproutletWrapper* sproutlet_wrapp
 
 
 /// Handles a response to an associated UACTsx.
-void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
-                                                    pjsip_tx_data* rsp)
+void SproutletProxy::ExtUASTsx::on_new_client_response(UACTsx* uac_tsx,
+                                                       pjsip_tx_data* rsp)
 {
   enter_context();
 
@@ -872,8 +871,8 @@ void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
 
 
 /// Handles a response to an associated UACTsx.
-void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
-                                                      pjsip_event_id_e event)
+void SproutletProxy::ExtUASTsx::on_client_not_responding(UACTsx* uac_tsx,
+                                                         pjsip_event_id_e event)
 {
   enter_context();
   dissociate(uac_tsx);
@@ -886,10 +885,10 @@ void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
 
 /// Notification that the underlying PJSIP UAS transaction has changed state.
 ///
-/// After calling this, the caller must not assume that the UASTsx still
+/// After calling this, the caller must not assume that the ExtUASTsx still
 /// exists - if the PJSIP transaction is being destroyed, this method will
-/// destroy the UASTsx.
-void SproutletProxy::UASTsx::on_tsx_state(pjsip_event* event)
+/// destroy the ExtUASTsx.
+void SproutletProxy::ExtUASTsx::on_tsx_state(pjsip_event* event)
 {
   enter_context();
 
@@ -924,7 +923,7 @@ void SproutletProxy::UASTsx::on_tsx_state(pjsip_event* event)
     _proxy->unbind_transaction(_tsx);
     _tsx = NULL;
 
-    // Check to see if we can destroy the UASTsx.
+    // Check to see if we can destroy the ExtUASTsx.
     check_destroy();
   }
 
@@ -932,7 +931,7 @@ void SproutletProxy::UASTsx::on_tsx_state(pjsip_event* event)
 }
 
 
-pj_status_t SproutletProxy::UASTsx::create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx)
+pj_status_t SproutletProxy::ExtUASTsx::create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx)
 {
   size_t index;
   pj_status_t status = allocate_uac(tdata, index);
@@ -948,8 +947,8 @@ pj_status_t SproutletProxy::UASTsx::create_uac(pjsip_tx_data* tdata, UACTsx*& ua
 }
 
 
-void SproutletProxy::UASTsx::tx_response(SproutletWrapper* downstream,
-                                         pjsip_tx_data* rsp)
+void SproutletProxy::ExtUASTsx::tx_response(SproutletWrapper* downstream,
+                                            pjsip_tx_data* rsp)
 {
   if (downstream == _root)
   {
@@ -985,28 +984,198 @@ void SproutletProxy::UASTsx::tx_response(SproutletWrapper* downstream,
     handle_tx_response(downstream, rsp);
   }
 
-  // Check to see if the UASTsx can be destroyed.
+  // Check to see if the ExtUASTsx can be destroyed.
   check_destroy();
 }
 
 
-/// Checks to see if the UASTsx can be destroyed.  It is only safe to destroy
-/// the UASTsx when all the Sproutlet's have completed their processing, which
+/// Checks to see if the ExtUASTsx can be destroyed.  It is only safe to destroy
+/// the ExtUASTsx when all the Sproutlet's have completed their processing, which
 /// only occurs when all the linkages are broken.
-void SproutletProxy::UASTsx::check_destroy()
+void SproutletProxy::ExtUASTsx::check_destroy()
 {
   if (can_destroy() &&
       (_tsx == NULL))
   {
     // UAS transaction has been destroyed and all Sproutlets are complete.
-    LOG_DEBUG("Safe for UASTsx to suicide");
+    LOG_DEBUG("Safe for ExtUASTsx to suicide");
+    _pending_destroy = true;
+  }
+}
+
+
+SproutletProxy::IntUASTsx::IntUASTsx(SproutletProxy* proxy) :
+  BasicProxy::UASTsx(proxy),
+  UASTsxMixin(proxy, trail())
+{
+  LOG_VERBOSE("Sproutlet Proxy transaction (%p) created", this);
+}
+
+
+SproutletProxy::IntUASTsx::~IntUASTsx()
+{
+  LOG_VERBOSE("Sproutlet Proxy transaction (%p) destroyed", this);
+}
+
+
+/// Initialise the UAS transaction object.
+pj_status_t SproutletProxy::IntUASTsx::init(pjsip_rx_data* rdata)
+{
+  // Do the BasicProxy initialization first.
+  pj_status_t status = BasicProxy::UASTsx::init(rdata);
+
+  if (status == PJ_SUCCESS)
+  {
+    status = create_sproutlet_wrapper(_req, rdata);
+  }
+
+  return status;
+}
+
+
+/// Handle the incoming half of a transaction request.
+void SproutletProxy::IntUASTsx::process_tsx_request(pjsip_rx_data* rdata)
+{
+  // Pass the request to the Sproutlet at the root of the tree.
+  pjsip_tx_data_add_ref(_req);
+  _root->rx_request(_req);
+
+  // Schedule any requests generated by the Sproutlet.
+  schedule_requests();
+  check_destroy();
+}
+
+
+/// Handle a received CANCEL request.
+void SproutletProxy::IntUASTsx::process_cancel_request(pjsip_rx_data* rdata)
+{
+  // We may receive a CANCEL after sending a final response, so check that
+  // the root Sproutlet is still connected.
+  if (_root != NULL)
+  {
+    // Pass the CANCEL to the Sproutlet at the root of the tree.
+    pjsip_tx_data* tdata = PJUtils::clone_msg(stack_data.endpt, rdata);
+    _root->rx_cancel(tdata);
+
+    // Schedule any requests generated by the Sproutlet.
+    schedule_requests();
+    check_destroy();
+  }
+}
+
+
+/// Handle a timer expiring.
+void SproutletProxy::IntUASTsx::process_timer_pop(SproutletWrapper* sproutlet_wrapper,
+                                                  void* context)
+{
+  enter_context();
+  sproutlet_wrapper->on_timer_pop(context);
+  schedule_requests();
+  check_destroy();
+  exit_context();
+}
+
+
+void SproutletProxy::IntUASTsx::terminate()
+{
+  enter_context();
+  _user_terminated = true;
+  if (_root != NULL)
+  {
+    // Notify the root Sproutlet of the error.
+    LOG_DEBUG("Pass error to Sproutlet %p", _root);
+    _root->rx_error(PJSIP_SC_REQUEST_TIMEOUT);
+    schedule_requests();
+    _root = NULL;
+  }
+  check_destroy();
+  exit_context();
+}
+
+
+/// Handles a response to an associated UACTsx.
+void SproutletProxy::IntUASTsx::on_new_client_response(UACTsx* uac_tsx,
+                                                       pjsip_tx_data* rsp)
+{
+  enter_context();
+
+  if (rsp->msg->line.status.code >= PJSIP_SC_OK)
+  {
+    // This is a final response, so dissociate the UAC transaction.
+    dissociate(uac_tsx);
+  }
+
+  handle_client_response(uac_tsx, rsp);
+  schedule_requests();
+  check_destroy();
+  exit_context();
+}
+
+
+/// Handles a response to an associated UACTsx.
+void SproutletProxy::IntUASTsx::on_client_not_responding(UACTsx* uac_tsx,
+                                                         pjsip_event_id_e event)
+{
+  enter_context();
+  dissociate(uac_tsx);
+  handle_client_not_responding(uac_tsx, event);
+  schedule_requests();
+  check_destroy();
+  exit_context();
+}
+
+
+pj_status_t SproutletProxy::IntUASTsx::create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx)
+{
+  size_t index;
+  pj_status_t status = allocate_uac(tdata, index);
+  if (status == PJ_SUCCESS)
+  {
+    uac_tsx = _uac_tsx[index];
+  }
+  else
+  {
+    uac_tsx = NULL;
+  }
+  return status;
+}
+
+
+void SproutletProxy::IntUASTsx::tx_response(SproutletWrapper* downstream,
+                                            pjsip_tx_data* rsp)
+{
+  if (downstream == _root)
+  {
+    // This is the root sproutlet in the tree, so drop the response.
+    pjsip_tx_data_dec_ref(rsp);
+  }
+  else
+  {
+    handle_tx_response(downstream, rsp);
+  }
+
+  // Check to see if the IntUASTsx can be destroyed.
+  check_destroy();
+}
+
+
+/// Checks to see if the IntUASTsx can be destroyed.  It is only safe to destroy
+/// the IntUASTsx when all the Sproutlet's have completed their processing, which
+/// only occurs when all the linkages are broken.
+void SproutletProxy::IntUASTsx::check_destroy()
+{
+  if (can_destroy() &&
+      _user_terminated)
+  {
+    // UAS transaction has been destroyed and all Sproutlets are complete.
+    LOG_DEBUG("Safe for IntUASTsx to suicide");
     _pending_destroy = true;
   }
 }
 
 
 //
-// UASTsx::SproutletWrapper methods.
+// ExtUASTsx::SproutletWrapper methods.
 //
 
 SproutletWrapper::SproutletWrapper(SproutletProxy* proxy,
@@ -1092,7 +1261,7 @@ const std::string& SproutletWrapper::service_name() const
 }
 
 //
-// UASTsx::SproutletWrapper overloads.
+// ExtUASTsx::SproutletWrapper overloads.
 //
 
 /// Returns a mutable clone of the original request suitable for forwarding
