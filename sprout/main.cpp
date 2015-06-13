@@ -1960,11 +1960,8 @@ int main(int argc, char* argv[])
   HttpStackUtils::SpawningHandler<DeregistrationTask, DeregistrationTask::Config> deregistration_handler(&deregistration_config);
   HttpStackUtils::PingHandler ping_handler;
 
-  HttpStack* http_stack = NULL;
   if (opt.scscf_enabled)
   {
-    http_stack = HttpStack::get_instance();
-
     RegistrationTimeoutTask::Config reg_timeout_config(local_reg_store, remote_reg_store, hss_connection);
     AuthTimeoutTask::Config auth_timeout_config(av_store, hss_connection);
     DeregistrationTask::Config deregistration_config(local_reg_store, remote_reg_store, hss_connection, sip_resolver);
