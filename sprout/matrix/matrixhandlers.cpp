@@ -126,5 +126,5 @@ void MatrixUserHandler::process_request(HttpStack::Request& req,
   // TODO: Create user
 
   req.add_content("{}");
-  req.send_reply(rc, HTTP_OK);
+  req.send_reply(HTTP_OK, trail);
 }
