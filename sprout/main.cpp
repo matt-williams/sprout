@@ -69,7 +69,7 @@ extern "C" {
 #include "stack.h"
 #include "hssconnection.h"
 #include "xdmconnection.h"
-#include "stateful_proxy.h"
+#include "bono.h"
 #include "websockets.h"
 #include "mmtel.h"
 #include "subscription.h"
@@ -99,6 +99,7 @@ extern "C" {
 #include "common_sip_processing.h"
 #include "thread_dispatcher.h"
 #include "exception_handler.h"
+#include "scscfsproutlet.h"
 
 enum OptionTypes
 {
@@ -120,6 +121,13 @@ enum OptionTypes
   OPT_CASS_TARGET_LATENCY_US,
   OPT_EXCEPTION_MAX_TTL,
   OPT_MAX_SESSION_EXPIRES,
+  OPT_SIP_BLACKLIST_DURATION,
+  OPT_HTTP_BLACKLIST_DURATION,
+  OPT_SIP_TCP_CONNECT_TIMEOUT,
+  OPT_SIP_TCP_SEND_TIMEOUT,
+  OPT_SESSION_CONTINUED_TIMEOUT_MS,
+  OPT_SESSION_TERMINATED_TIMEOUT_MS,
+  OPT_STATELESS_PROXIES,
   OPT_MATRIX_HOME_SERVER,
   OPT_MATRIX_AS_TOKEN
 };
@@ -184,6 +192,13 @@ const static struct pj_getopt_option long_opt[] =
   { "min-token-rate",               required_argument, 0, OPT_MIN_TOKEN_RATE},
   { "cass-target-latency-us",       required_argument, 0, OPT_CASS_TARGET_LATENCY_US},
   { "exception-max-ttl",            required_argument, 0, OPT_EXCEPTION_MAX_TTL},
+  { "sip-blacklist-duration",       required_argument, 0, OPT_SIP_BLACKLIST_DURATION},
+  { "http-blacklist-duration",      required_argument, 0, OPT_HTTP_BLACKLIST_DURATION},
+  { "sip-tcp-connect-timeout",      required_argument, 0, OPT_SIP_TCP_CONNECT_TIMEOUT},
+  { "sip-tcp-send-timeout",         required_argument, 0, OPT_SIP_TCP_SEND_TIMEOUT},
+  { "session-continued-timeout",    required_argument, 0, OPT_SESSION_CONTINUED_TIMEOUT_MS},
+  { "session-terminated-timeout",   required_argument, 0, OPT_SESSION_TERMINATED_TIMEOUT_MS},
+  { "stateless-proxies",            required_argument, 0, OPT_STATELESS_PROXIES},
   { "matrix-home-server",           required_argument, 0, OPT_MATRIX_HOME_SERVER},
   { "matrix-as-token",              required_argument, 0, OPT_MATRIX_AS_TOKEN},
   { NULL,                           0,                 0, 0}
@@ -320,6 +335,29 @@ static void usage(void)
        "     --exception-max-ttl <secs>\n"
        "                            The maximum time before the process exits if it hits an exception.\n"
        "                            The actual time is randomised.\n"
+       "     --sip-blacklist-duration <secs>\n"
+       "                            The amount of time to blacklist a SIP peer when it is unresponsive.\n"
+       "     --http-blacklist-duration <secs>\n"
+       "                            The amount of time to blacklist an HTTP peer when it is unresponsive.\n"
+       "     --sip-tcp-connect-timeout <milliseconds>\n"
+       "                            The amount of time to wait for a SIP TCP connection to establish.\n"
+       "     --sip-tcp-send-timeout <milliseconds>\n"
+       "                            The amount of time to wait for data sent on a SIP TCP connection to be\n"
+       "                            acknowledged by the peer.\n"
+       "     --session-continued-timeout <milliseconds>\n"
+       "                            If an Application Server with default handling of 'continue session'\n"
+       "                            is unresponsive, this is the time that sprout will wait (in ms)\n"
+       "                            before bypassing the AS and moving onto the next AS in the chain.\n"
+       "     --session-terminated-timeout <milliseconds>\n"
+       "                            If an Application Server with default handling of 'terminate session'\n"
+       "                            is unresponsive, this is the time that sprout will wait (in ms)\n"
+       "                            before terminating the session.\n"
+       "     --stateless-proxies <comma-separated-list>\n"
+       "                            A comma separated list of domain names that are treated as SIP\n"
+       "                            stateless proxies. This field should reflect how the servers are identified\n"
+       "                            in SIP (for example if a cluster of nodes is identified by the name\n"
+       "                            'cluster.example.com', this value should be used instead of the hostnames\n"
+       "                            or IP addresses of individual servers\n"
        "     --matrix-home-server <server-name>\n"
        "                            The name of the Matrix (http://matrix.org/) home server to gateway to.\n"
        "     --matrix-as-token <token>\n"
@@ -645,12 +683,12 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
 
     case 'u':
       options->enforce_user_phone = true;
-      LOG_INFO("ENUM lookups only done on SIP URIs containing user=phone");
+      LOG_INFO("ENUM lookups are only done on SIP URIs if they contain user=phone");
       break;
 
     case 'g':
       options->enforce_global_only_lookups = true;
-      LOG_INFO("ENUM lookups only done on URIs containing a global number");
+      LOG_INFO("ENUM lookups are only done on URIs if they contain a global number");
       break;
 
     case 'e':
@@ -871,6 +909,53 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
                options->exception_max_ttl);
       break;
 
+    case OPT_SIP_BLACKLIST_DURATION:
+      options->sip_blacklist_duration = atoi(pj_optarg);
+      LOG_INFO("SIP blacklist duration set to %d",
+               options->sip_blacklist_duration);
+      break;
+
+    case OPT_HTTP_BLACKLIST_DURATION:
+      options->http_blacklist_duration = atoi(pj_optarg);
+      LOG_INFO("HTTP blacklist duration set to %d",
+               options->http_blacklist_duration);
+      break;
+
+    case OPT_SIP_TCP_CONNECT_TIMEOUT:
+      options->sip_tcp_connect_timeout = atoi(pj_optarg);
+      LOG_INFO("SIP TCP connect timeout set to %d",
+               options->sip_tcp_connect_timeout);
+      break;
+
+    case OPT_SIP_TCP_SEND_TIMEOUT:
+      options->sip_tcp_send_timeout = atoi(pj_optarg);
+      LOG_INFO("SIP TCP send timeout set to %d",
+               options->sip_tcp_send_timeout);
+      break;
+
+    case OPT_SESSION_CONTINUED_TIMEOUT_MS:
+      options->session_continued_timeout_ms = atoi(pj_optarg);
+      LOG_INFO("Session continue timeout set to %dms",
+               options->session_continued_timeout_ms);
+      break;
+
+    case OPT_SESSION_TERMINATED_TIMEOUT_MS:
+      options->session_terminated_timeout_ms = atoi(pj_optarg);
+      LOG_INFO("Session terminated timeout set to %dms",
+               options->session_terminated_timeout_ms);
+      break;
+
+    case OPT_STATELESS_PROXIES:
+      {
+        std::vector<std::string> stateless_proxies;
+        Utils::split_string(std::string(pj_optarg), ',', stateless_proxies, 0, false);
+        options->stateless_proxies.insert(stateless_proxies.begin(),
+                                          stateless_proxies.end());
+        LOG_INFO("%d stateless proxies are configured",
+                 options->stateless_proxies.size());
+      }
+      break;
+
     case OPT_MATRIX_HOME_SERVER:
       options->matrix_home_server = std::string(pj_optarg);
       LOG_INFO("Matrix home server set to %s",
@@ -891,14 +976,6 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       LOG_ERROR("Unknown option. Run with --help for help.");
       return -1;
     }
-  }
-
-  // If the upstream proxy port is not set, default it to the trusted port.
-  // We couldn't do this earlier because the trusted port might be set after
-  // the upstream proxy.
-  if (options->upstream_proxy_port == 0)
-  {
-    options->upstream_proxy_port = options->pcscf_trusted_port;
   }
 
   return PJ_SUCCESS;
@@ -1209,6 +1286,13 @@ int main(int argc, char* argv[])
   opt.memcached_write_format = MemcachedWriteFormat::JSON;
   opt.override_npdi = PJ_FALSE;
   opt.exception_max_ttl = 600;
+  opt.sip_blacklist_duration = SIPResolver::DEFAULT_BLACKLIST_DURATION;
+  opt.http_blacklist_duration = HttpResolver::DEFAULT_BLACKLIST_DURATION;
+  opt.sip_tcp_connect_timeout = 2000;
+  opt.sip_tcp_send_timeout = 2000;
+  opt.session_continued_timeout_ms = SCSCFSproutlet::DEFAULT_SESSION_CONTINUED_TIMEOUT;
+  opt.session_terminated_timeout_ms = SCSCFSproutlet::DEFAULT_SESSION_TERMINATED_TIMEOUT;
+  opt.stateless_proxies.clear();
   opt.matrix_home_server = "";
   opt.matrix_as_token = "";
 
@@ -1447,7 +1531,7 @@ int main(int argc, char* argv[])
 
   // Create a DNS resolver and a SIP specific resolver.
   dns_resolver = new DnsCachedResolver(opt.dns_servers);
-  sip_resolver = new SIPResolver(dns_resolver);
+  sip_resolver = new SIPResolver(dns_resolver, opt.sip_blacklist_duration);
 
   // Create a new quiescing manager instance and register our completion handler
   // with it.
@@ -1472,6 +1556,8 @@ int main(int argc, char* argv[])
                       opt.record_routing_model,
                       opt.default_session_expires,
                       opt.max_session_expires,
+                      opt.sip_tcp_connect_timeout,
+                      opt.sip_tcp_send_timeout,
                       quiescing_mgr,
                       opt.billing_cdf);
 
@@ -1497,7 +1583,9 @@ int main(int argc, char* argv[])
   signal(UNQUIESCE_SIGNAL, quiesce_unquiesce_handler);
 
   // Now that we know the address family, create an HttpResolver too.
-  http_resolver = new HttpResolver(dns_resolver, stack_data.addr_family);
+  http_resolver = new HttpResolver(dns_resolver,
+                                   stack_data.addr_family,
+                                   opt.http_blacklist_duration);
 
   if (opt.ralf_server != "")
   {
@@ -1530,11 +1618,12 @@ int main(int argc, char* argv[])
                                        hss_comm_monitor);
   }
 
-  if (opt.scscf_enabled)
+  if ((opt.scscf_enabled) || (opt.icscf_enabled))
   {
-    // Create ENUM service required for S-CSCF.
+    // Create ENUM service required for I/S-CSCF.
     if (!opt.enum_servers.empty())
     {
+      LOG_STATUS("Setting up the ENUM server(s)");
       enum_service = new DNSEnumService(opt.enum_servers,
                                         opt.enum_suffix,
                                         new DNSResolverFactory(),
@@ -1542,6 +1631,7 @@ int main(int argc, char* argv[])
     }
     else if (!opt.enum_file.empty())
     {
+      LOG_STATUS("Reading from an ENUM file");
       enum_service = new JSONEnumService(opt.enum_file);
     }
   }
@@ -1577,7 +1667,6 @@ int main(int argc, char* argv[])
 
     // Launch stateful proxy as P-CSCF.
     status = init_stateful_proxy(NULL,
-                                 NULL,
                                  NULL,
                                  NULL,
                                  true,
@@ -1658,9 +1747,8 @@ int main(int argc, char* argv[])
 
         if (!(((MemcachedStore*)remote_data_store)->has_servers()))
         {
-          LOG_ERROR("Remote cluster settings file '%s' does not contain a valid set of servers",
-                    opt.remote_store_servers.c_str());
-          return 1;
+          LOG_WARNING("Remote cluster settings file '%s' does not contain a valid set of servers",
+                      opt.remote_store_servers.c_str());
         };
       }
     }
@@ -1805,7 +1893,8 @@ int main(int argc, char* argv[])
                                          std::string(stack_data.scscf_uri.ptr,
                                                      stack_data.scscf_uri.slen),
                                          host_aliases,
-                                         sproutlets);
+                                         sproutlets,
+                                         opt.stateless_proxies);
     if (sproutlet_proxy == NULL)
     {
       CL_SPROUT_S_CSCF_INIT_FAIL.log();
@@ -1860,8 +1949,22 @@ int main(int argc, char* argv[])
     return 1;
   }
 
+  RegistrationTimeoutTask::Config reg_timeout_config(local_reg_store, remote_reg_store, hss_connection);
+  AuthTimeoutTask::Config auth_timeout_config(av_store, hss_connection);
+  DeregistrationTask::Config deregistration_config(local_reg_store, remote_reg_store, hss_connection, sip_resolver);
+
+  // The RegistrationTimeoutTask and AuthTimeoutTask both handle
+  // chronos requests, so use the ChronosHandler.
+  ChronosHandler<RegistrationTimeoutTask, RegistrationTimeoutTask::Config> reg_timeout_handler(&reg_timeout_config);
+  ChronosHandler<AuthTimeoutTask, AuthTimeoutTask::Config> auth_timeout_handler(&auth_timeout_config);
+  HttpStackUtils::SpawningHandler<DeregistrationTask, DeregistrationTask::Config> deregistration_handler(&deregistration_config);
+  HttpStackUtils::PingHandler ping_handler;
+
+  HttpStack* http_stack = NULL;
   if (opt.scscf_enabled)
   {
+    http_stack = HttpStack::get_instance();
+
     RegistrationTimeoutTask::Config reg_timeout_config(local_reg_store, remote_reg_store, hss_connection);
     AuthTimeoutTask::Config auth_timeout_config(av_store, hss_connection);
     DeregistrationTask::Config deregistration_config(local_reg_store, remote_reg_store, hss_connection, sip_resolver);
@@ -1871,6 +1974,7 @@ int main(int argc, char* argv[])
     ChronosHandler<RegistrationTimeoutTask, RegistrationTimeoutTask::Config> reg_timeout_handler(&reg_timeout_config);
     ChronosHandler<AuthTimeoutTask, AuthTimeoutTask::Config> auth_timeout_handler(&auth_timeout_config);
     HttpStackUtils::SpawningHandler<DeregistrationTask, DeregistrationTask::Config> deregistration_handler(&deregistration_config);
+    HttpStackUtils::PingHandler ping_handler;
 
     try
     {

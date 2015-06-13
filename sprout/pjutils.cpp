@@ -56,7 +56,6 @@ extern "C" {
 #include "sproutsasevent.h"
 
 static const int DEFAULT_RETRIES = 5;
-static const int DEFAULT_BLACKLIST_DURATION = 30;
 
 static void on_tsx_state(pjsip_transaction*, pjsip_event*);
 
@@ -950,7 +949,7 @@ void PJUtils::resolve_next_hop(pjsip_tx_data* tdata,
 /// resolve calls.
 void PJUtils::blacklist_server(AddrInfo& server)
 {
-  stack_data.sipresolver->blacklist(server, DEFAULT_BLACKLIST_DURATION);
+  stack_data.sipresolver->blacklist(server);
 }
 
 
@@ -1085,6 +1084,21 @@ static void on_tsx_state(pjsip_transaction* tsx, pjsip_event* event)
           // More servers to try, so allocate a new branch ID and transaction.
           LOG_DEBUG("Attempt to resend request to next destination server");
           pjsip_tx_data* tdata = sss->tdata;
+
+          // In congestion cases, the old tdata might still be held by PJSIP's
+          // transport layer waiting to be sent.  Therefore it's not safe to re-send
+          // the same tdata, so we should clone it first.
+          // LCOV_EXCL_START - No congestion in UTs
+          if (tdata->is_pending)
+          {
+            pjsip_tx_data* old_tdata = tdata;
+            tdata = PJUtils::clone_tdata(tdata);
+
+            // We no longer care about the old tdata.
+            pjsip_tx_data_dec_ref(old_tdata);
+          }
+          // LCOV_EXCL_STOP
+
           pjsip_transaction* retry_tsx;
           PJUtils::generate_new_branch_id(tdata);
           pj_status_t status = pjsip_tsx_create_uac(&mod_sprout_util,
@@ -2089,14 +2103,24 @@ pj_bool_t PJUtils::is_user_global(const pj_str_t& user)
 }
 
 
-/// Determines whether a user string is purely numeric (maybe with a leading +).
+static const boost::regex CHARS_TO_STRIP = boost::regex("[.)(-]");
+
+// Strip any visual separators from the number
+std::string PJUtils::remove_visual_separators(const std::string& number)
+{ 
+  return boost::regex_replace(number, CHARS_TO_STRIP, std::string("")); 
+};
+
+/// Determines whether a user string is a valid phone number
+/// (maybe with a leading + or separator characters).
 ///
 /// @returns                      PJ_TRUE if the user is numeric, PJ_FALSE if
 ///                               not.
 /// @param user                   The user to test.
-pj_bool_t PJUtils::is_user_numeric(const std::string& user)
+pj_bool_t PJUtils::is_user_numeric(const std::string& user_raw)
 {
   pj_bool_t rc = PJ_TRUE;
+  std::string user = PJUtils::remove_visual_separators(user_raw);
 
   for (size_t i = 0; i < user.size(); i++)
   {

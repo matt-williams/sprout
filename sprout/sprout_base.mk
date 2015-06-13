@@ -17,7 +17,7 @@ TARGET_SOURCES := logger.cpp \
                   dnscachedresolver.cpp \
                   baseresolver.cpp \
                   sipresolver.cpp \
-                  stateful_proxy.cpp \
+                  bono.cpp \
                   registration_utils.cpp \
                   registrar.cpp \
                   authentication.cpp \
@@ -36,7 +36,6 @@ TARGET_SOURCES := logger.cpp \
                   regstore.cpp \
                   xdmconnection.cpp \
                   simservs.cpp \
-                  callservices.cpp \
                   enumservice.cpp \
                   bgcfservice.cpp \
                   icscfrouter.cpp \
@@ -104,7 +103,6 @@ CPPFLAGS_BUILD += -O2
 LDFLAGS += -L${ROOT}/usr/lib -rdynamic
 LDFLAGS += -lmemcached \
            -lmemcachedutil \
-           -ljsoncpp \
            -lssl \
            -lcrypto \
            -ldl \
@@ -122,7 +120,11 @@ LDFLAGS += -lmemcached \
            -lsas \
            -lboost_filesystem
 
-LDFLAGS += $(shell PKG_CONFIG_PATH=${ROOT}/usr/lib/pkgconfig pkg-config --libs libpjproject)
+# Explicitly link some pjsip modules. Some plugins require symbols in them
+# (which sprout-base doesn't), and the plugins are dynamically linked at run
+# time, so GCC won't link in the symbols they need unless we explicitly tell
+# it to.
+LDFLAGS += -Wl,--whole-archive -lpjmedia-x86_64-unknown-linux-gnu -Wl,--no-whole-archive $(shell PKG_CONFIG_PATH=${ROOT}/usr/lib/pkgconfig pkg-config --libs libpjproject)
 
 include ${MK_DIR}/platform.mk
 

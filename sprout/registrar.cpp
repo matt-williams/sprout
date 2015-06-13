@@ -255,8 +255,9 @@ RegStore::AoR* write_to_store(RegStore* primary_store,       ///<store to write 
     // If we don't have any bindings, try the backup AoR and/or store.
     if (aor_data->bindings().empty())
     {
-      if ((backup_aor == NULL) &&
-          (backup_store != NULL))
+      if ((backup_aor == NULL)   &&
+          (backup_store != NULL) &&
+          (backup_store->has_servers()))
       {
         backup_aor = backup_store->get_aor_data(aor, trail);
         backup_aor_alloced = (backup_aor != NULL);
@@ -714,7 +715,7 @@ void process_register_request(pjsip_rx_data* rdata)
 
     // If we have a remote store, try to store this there too.  We don't worry
     // about failures in this case.
-    if (remote_store != NULL)
+    if ((remote_store != NULL) && remote_store->has_servers())
     {
       int tmp_expiry = 0;
       bool ignored;
