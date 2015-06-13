@@ -458,7 +458,7 @@ SproutletProxy::UASTsxMixin::UASTsxMixin(SproutletProxy* proxy, SAS::TrailId tra
 
 pj_status_t SproutletProxy::UASTsxMixin::create_sproutlet_wrapper(pjsip_tx_data* req, pjsip_rx_data* rdata)
 {
-  pj_status_t status;
+  pj_status_t status = PJ_SUCCESS;
 
   // Locate the target Sproutlet for the request, and create the helper and
   // the Sproutlet transaction.
