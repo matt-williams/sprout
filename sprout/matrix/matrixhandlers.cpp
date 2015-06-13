@@ -65,42 +65,59 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
       std::string room;
       JSON_GET_STRING_MEMBER(*events, "room_id", room);
 
-      // TODO Sort out locking - the MatrixTsx could be deleted under our feet
-      MatrixTsx* tsx = _matrix->get_tsx(room);
-      if (tsx != NULL)
+      if (type == "m.room.member")
       {
-        tsx->add_call_id_to_trail(trail);
-
-        std::string user;
-        JSON_GET_STRING_MEMBER(*events, "user_id", user);
-
-        std::string call_id;
-        std::string sdp;
-        if (boost::starts_with(type, "m.call"))
+        std::string membership;
+        JSON_ASSERT_CONTAINS(*events, "content");
+        JSON_ASSERT_OBJECT((*events)["content"]);
+        JSON_GET_STRING_MEMBER((*events)["content"], "membership", membership);
+        if (membership == "invite")
         {
-          JSON_GET_STRING_MEMBER((*events)["content"], "call_id", call_id);
+          std::string user;
+          JSON_GET_STRING_MEMBER(*events, "state_key", user);
 
-          JSON_ASSERT_CONTAINS(*events, "content");
-          JSON_ASSERT_OBJECT((*events)["content"]);
-
-          if (type == "m.call.invite")
-          {
-            JSON_ASSERT_CONTAINS((*events)["content"], "offer");
-            JSON_ASSERT_OBJECT((*events)["content"]["offer"]);
-            JSON_GET_STRING_MEMBER((*events)["content"]["offer"], "sdp", sdp);
-          }
-          else if (type == "m.call.answer")
-          {
-            JSON_ASSERT_CONTAINS((*events)["content"], "answer");
-            JSON_ASSERT_OBJECT((*events)["content"]["answer"]);
-            JSON_GET_STRING_MEMBER((*events)["content"]["answer"], "sdp", sdp);
-          }
+          HTTPCode rc = _matrix->connection()->join_room(user, room);
         }
-        tsx->rx_matrix_event(type, user, call_id, sdp);
       }
       else
       {
-        LOG_DEBUG("Ignoring event of type %s in empty room %s", type.c_str(), room.c_str());
+        // TODO Sort out locking - the MatrixTsx could be deleted under our feet
+        MatrixTsx* tsx = _matrix->get_tsx(room);
+        if (tsx != NULL)
+        {
+          tsx->add_call_id_to_trail(trail);
+
+          std::string user;
+          JSON_GET_STRING_MEMBER(*events, "user_id", user);
+
+          std::string call_id;
+          std::string sdp;
+          if (boost::starts_with(type, "m.call"))
+          {
+            JSON_GET_STRING_MEMBER((*events)["content"], "call_id", call_id);
+
+            JSON_ASSERT_CONTAINS(*events, "content");
+            JSON_ASSERT_OBJECT((*events)["content"]);
+
+            if (type == "m.call.invite")
+            {
+              JSON_ASSERT_CONTAINS((*events)["content"], "offer");
+              JSON_ASSERT_OBJECT((*events)["content"]["offer"]);
+              JSON_GET_STRING_MEMBER((*events)["content"]["offer"], "sdp", sdp);
+            }
+            else if (type == "m.call.answer")
+            {
+              JSON_ASSERT_CONTAINS((*events)["content"], "answer");
+              JSON_ASSERT_OBJECT((*events)["content"]["answer"]);
+              JSON_GET_STRING_MEMBER((*events)["content"]["answer"], "sdp", sdp);
+            }
+          }
+          tsx->rx_matrix_event(type, user, call_id, sdp);
+        }
+        else
+        {
+          LOG_DEBUG("Ignoring event of type %s in empty room %s", type.c_str(), room.c_str());
+        }
       }
     }
 
@@ -125,10 +142,21 @@ void MatrixUserHandler::process_request(HttpStack::Request& req,
 {
   // TODO: run in a separate thread/async
 
+  HTTPCode rc = HTTP_OK;
   const std::string prefix = "/matrix/users/%40";
   std::string path = req.path();
-  std::string user = path.substr(prefix.length(), path.find_first_of("%", prefix.length()) - prefix.length());
-  HTTPCode rc = _matrix->connection()->register_user(user, trail);
+  LOG_DEBUG("Got request for %s - %d > %d?", path.c_str(), path.length(), prefix.length());
+  if (path.length() > prefix.length())
+  {
+    int first_percent = path.find_first_of("%", prefix.length());
+    LOG_DEBUG("first percent is %d - > %d?", first_percent, prefix.length());
+    if (first_percent > prefix.length())
+    {
+      std::string user = path.substr(prefix.length(), first_percent - prefix.length());
+      LOG_DEBUG("user = %s", user.c_str());
+      rc = _matrix->connection()->register_user(user, trail);
+    }
+  }
   if (rc == HTTP_OK)
   {
     req.add_content("{}");
