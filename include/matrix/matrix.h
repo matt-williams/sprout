@@ -89,6 +89,7 @@ private:
   std::string _home_server;
   std::map<std::string,MatrixTsx*> _tsx_map;
   MatrixTransactionHandler _transaction_handler;
+  MatrixUserHandler _user_handler;
   MatrixConnection _connection;
 };
 

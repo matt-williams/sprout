@@ -54,5 +54,18 @@ private:
   Matrix* _matrix;
 };
 
+/// @class MatrixUsersHandler
+///
+/// Handles Matrix user HTTP requests
+class MatrixUserHandler : public HttpStack::HandlerInterface
+{
+public:
+  MatrixUserHandler(Matrix* matrix) : _matrix(matrix) {}
+  void process_request(HttpStack::Request& req, SAS::TrailId trail);
+
+private:
+  Matrix* _matrix;
+};
+
 #endif
 
