@@ -69,11 +69,6 @@ public:
                    LastValueCache* stats_aggregator);
   virtual ~MatrixConnection() {};
 
-  HTTPCode register_as(const std::string& url,
-                       const std::vector<std::string>& user_regexs,
-                       const std::vector<std::string>& alias_regexs,
-                       const std::vector<std::string>& room_regexs,
-                       std::string& hs_token);
   HTTPCode register_user(const std::string& userpart,
                          const SAS::TrailId trail = 0);
   HTTPCode get_room_for_alias(const std::string& alias,
@@ -105,12 +100,6 @@ public:
                       const SAS::TrailId trail = 0);
 
 private:
-  std::string build_register_as_req(const std::string& url,
-                                    const std::vector<std::string>& user_regexs,
-                                    const std::vector<std::string>& alias_regexs,
-                                    const std::vector<std::string>& room_regexs);
-  HTTPCode parse_register_as_rsp(const std::string& response,
-                                 std::string& hs_token);
   std::string build_register_user_req(const std::string& userpart);
   HTTPCode parse_get_room_rsp(const std::string& response,
                               std::string& id);

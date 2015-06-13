@@ -1,0 +1,14 @@
+url: "http://127.0.0.1:9888/matrix"
+as_token: <string>
+hs_token: <string>
+sender_localpart: "matrix-gateway"
+namespaces:
+  users:
+    - exclusive: false
+      regex: "@tel_\\+?[0-9][0-9]*:.*"
+    - exclusive: false
+      regex: "@sip_.*:.*"
+  aliases:
+    - exclusive: false
+      regex: "#call-.*:.*"
+  rooms: []

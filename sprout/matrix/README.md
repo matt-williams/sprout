@@ -10,7 +10,7 @@ Once you've done so, you can configure it via `/etc/clearwater/config`.  The imp
 
 *   `sprout_hostname` - set this to a hostname that resolves to the Project Clearwater/Matrix Gateway host (not to the Project Clearwater core Sprout node)
 *   `matrix_home_server` - set this to the hostname of the Matrix home server to connect to - it might currently need to be the same as `sprout_hostname` (i.e. local to the gateway)
-*   `matrix_as_token` - set this to an AS token you've created on Matrix.
+*   `matrix_as_token` - set this to an AS token you've created on Matrix - copy the [matrix-gateway.yaml] example to your Matrix server, modify it to match your deployment and reference it using `app_service_config_files: ["matrix-gateway.yaml"]` in your `homeserver.yaml`.
 
 You'll also need to configure Project Clearwater to route to the Project Clearwater/Matrix Gateway.  Since the Project Clearwater/Matrix Gateway appears to be an IBCF from the Project Clearwater core's perspective, you must configure its BGCF (`/etc/clearwater/bgcf.json`) with routing rules, e.g.
 
