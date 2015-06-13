@@ -98,6 +98,13 @@ public:
                       const std::string& event_type,
                       const std::string& event_body,
                       const SAS::TrailId trail = 0);
+  HTTPCode invite_user(const std::string& inviting_user,
+                       const std::string& invited_user,
+                       const std::string& room,
+                       const SAS::TrailId trail = 0);
+  HTTPCode join_room(const std::string& user,
+                     const std::string& room,
+                     const SAS::TrailId trail = 0);
 
 private:
   std::string build_register_user_req(const std::string& userpart);
@@ -111,7 +118,7 @@ private:
                                     const std::string& topic = "");
   HTTPCode parse_create_room_rsp(const std::string& response,
                                  std::string& id);
-
+  std::string build_invite_user_req(const std::string& invited_user);
   HttpConnection _http;
   std::string _as_token;
 };

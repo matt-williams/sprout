@@ -410,3 +410,47 @@ HTTPCode MatrixConnection::send_event(const std::string& user,
   return rc;
 }
 
+std::string MatrixConnection::build_invite_user_req(const std::string& invited_user)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("user_id");
+    writer.String(invited_user.c_str());
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+HTTPCode MatrixConnection::invite_user(const std::string& inviting_user,
+                                       const std::string& invited_user,
+                                       const std::string& room,
+                                       const SAS::TrailId trail)
+{
+  std::string path = "/_matrix/client/api/v1/rooms/" + room + "/invite?access_token=" + _as_token + "&user_id=" + inviting_user;
+  std::map<std::string,std::string> headers;
+  std::string body = build_invite_user_req(invited_user);
+
+  HTTPCode rc = _http.send_post(path, headers, body, trail);
+
+  // TODO Parse response
+
+  return rc;
+}
+
+HTTPCode MatrixConnection::join_room(const std::string& user,
+                                     const std::string& room,
+                                     const SAS::TrailId trail)
+{
+  std::string path = "/_matrix/client/api/v1/rooms/" + room + "/join?access_token=" + _as_token + "&user_id=" + user;
+  std::map<std::string,std::string> headers;
+
+  HTTPCode rc = _http.send_post(path, headers, "{}", trail);
+
+  // TODO Parse response
+
+  return rc;
+}
+

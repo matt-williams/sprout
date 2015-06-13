@@ -315,6 +315,10 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   else
   {
     // TODO Get members and, if not already a member, invite them
+    _config.connection->invite_user(from_matrix_user,
+                                    to_matrix_user,
+                                    _room_id,
+                                    trail());
 
     std::string call_invite_event = _config.connection->build_call_invite_event(_call_id,
                                                                                 _offer_sdp,
