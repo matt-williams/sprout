@@ -42,6 +42,7 @@
 #include "log.h"
 #include "constants.h"
 #include "matrix.h"
+#include "matrixutils.h"
 #include <boost/regex.hpp>
 #include "httpstack.h"
 
@@ -81,9 +82,18 @@ SproutletTsx* Matrix::get_tsx(SproutletTsxHelper* helper,
                               const std::string& alias,
                               pjsip_msg* req)
 {
-  MatrixTsx::Config config(this, _home_server, &_connection);
-
-  return new MatrixTsx(helper, config);
+  SproutletTsx* tsx;
+  if (alias == "matrix")
+  {
+    MatrixTsx::Config config(this, _home_server, &_connection);
+    tsx = new MatrixTsx(helper, config);
+  }
+  else if (alias == "matrix-outbound")
+  {
+    //MatrixTsx::Config config(this, _home_server, &_connection);
+    //tsx = new MatrixTsx(helper, config);
+  }
+  return tsx;
 }
 
 void Matrix::add_tsx(std::string room_id, MatrixTsx* tsx)
@@ -110,85 +120,6 @@ MatrixTsx* Matrix::get_tsx(std::string room_id)
 MatrixTsx::MatrixTsx(SproutletTsxHelper* helper, Config& config) :
   SproutletTsx(helper), _config(config)
 {
-}
-
-std::string MatrixTsx::ims_uri_to_matrix_user(pjsip_uri* uri)
-{
-  std::string matrix_user = "";
-  if (PJSIP_URI_SCHEME_IS_SIP(uri))
-  {
-    pjsip_sip_uri* sip_uri = (pjsip_sip_uri*)uri;
-    matrix_user = "@sip_" + PJUtils::pj_str_to_string(&sip_uri->user) + ":" + _config.home_server;
-  }
-  else if (PJSIP_URI_SCHEME_IS_TEL(uri))
-  {
-    pjsip_tel_uri* tel_uri = (pjsip_tel_uri*)uri;
-    matrix_user = "@tel_" + PJUtils::pj_str_to_string(&tel_uri->number) + ":" + _config.home_server;
-  }
-  return matrix_user;
-}
-
-std::string MatrixTsx::matrix_uri_to_matrix_user(pjsip_uri* uri)
-{
-  std::string matrix_user = "";
-  if (PJSIP_URI_SCHEME_IS_SIP(uri))
-  {
-    pjsip_sip_uri* sip_uri = (pjsip_sip_uri*)uri;
-    matrix_user = "@" + PJUtils::pj_str_to_string(&sip_uri->user) + ":" + PJUtils::pj_str_to_string(&sip_uri->host);
-  }
-  else if (PJSIP_URI_SCHEME_IS_TEL(uri))
-  {
-    pjsip_tel_uri* tel_uri = (pjsip_tel_uri*)uri;
-    matrix_user = "@" + PJUtils::pj_str_to_string(&tel_uri->number) + ":" + _config.home_server;
-  }
-  return matrix_user;
-}
-
-std::string MatrixTsx::matrix_user_to_userpart(std::string user)
-{
-  return user.substr(1, user.find(':', 1) - 1);
-}
-
-void MatrixTsx::parse_sdp(const std::string& body,
-                          std::string& sdp,
-                          std::vector<std::string>& candidates)
-{
-  boost::regex candidate_regex = boost::regex("a=candidate:[0-9]+ [0-9]+ tcp [0-9]+ ([0-9.]+) .*", boost::regex_constants::no_except);
-
-  // Split the message body into each SDP line.
-  std::stringstream stream(body);
-  std::string line;
-
-  while(std::getline(stream, line))
-  {
-    boost::smatch results;
-    if (boost::regex_match(line, results, candidate_regex))
-    {
-      candidates.push_back(results[1]);
-    }
-    else
-    {
-      sdp.append(line);
-      sdp.append("\n");
-    }
-    line = "";
-  }
-}
-
-pjsip_uri* MatrixTsx::get_from_uri(pjsip_msg* req)
-{
-  // Find the calling party in the P-Asserted-Identity header.
-  pjsip_routing_hdr* asserted_id =
-    (pjsip_routing_hdr*)pjsip_msg_find_hdr_by_name(req,
-                                                   &STR_P_ASSERTED_IDENTITY,
-                                                   NULL);
-  if (asserted_id == NULL)
-  {
-    LOG_DEBUG("No P-Asserted-Identity");
-    return NULL;
-  }
-
-  return (pjsip_uri*)pjsip_uri_get_uri(&asserted_id->name_addr);
 }
 
 void MatrixTsx::add_record_route(pjsip_msg* msg)
@@ -228,9 +159,9 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
     free_msg(req);
     return;
   }
-  std::string to_matrix_user = matrix_uri_to_matrix_user(to_uri);
+  std::string to_matrix_user = MatrixUtils::matrix_uri_to_matrix_user(to_uri, _config.home_server);
 
-  pjsip_uri* from_uri = get_from_uri(req);
+  pjsip_uri* from_uri = MatrixUtils::get_from_uri(req);
   if (from_uri == NULL)
   {
     pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
@@ -238,7 +169,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
     free_msg(req);
     return;
   }
-  std::string from_matrix_user = ims_uri_to_matrix_user(from_uri);
+  std::string from_matrix_user = MatrixUtils::ims_uri_to_matrix_user(from_uri, _config.home_server);
   _from_matrix_user = from_matrix_user;
 
   // Get the call ID.
@@ -276,7 +207,7 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
     //std::string body = std::string((const char*)req->body->data, req->body->len);
     //std::string sdp;
     //std::vector<std::string> candidates;
-    //parse_sdp(body, sdp, candidates);
+    //MatrixUtils::parse_sdp(body, sdp, candidates);
     std::string sdp = std::string((const char*)req->body->data, req->body->len);
     _event_type = MatrixConnection::EVENT_TYPE_CALL_INVITE;
     _event = _config.connection->build_call_invite_event(_call_id, sdp, _expires * 1000);
@@ -309,15 +240,11 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   LOG_DEBUG("Call from %s (%s) to %s (%s)", PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, from_uri).c_str(), from_matrix_user.c_str(), PJUtils::uri_to_string(PJSIP_URI_IN_REQ_URI, to_uri).c_str(), to_matrix_user.c_str());
   LOG_DEBUG("Call ID is %s, expiry is %d", call_id.c_str(), expires);
 
-  HTTPCode rc = _config.connection->register_user(matrix_user_to_userpart(from_matrix_user),
+  HTTPCode rc = _config.connection->register_user(MatrixUtils::matrix_user_to_userpart(from_matrix_user),
                                                   trail());
   // TODO Check and log response
 
-  std::string from_alias = from_matrix_user.substr(1);
-  from_alias = from_alias.replace(from_alias.find(":"), 1, "-");
-  std::string to_alias = to_matrix_user.substr(1);
-  to_alias = to_alias.replace(to_alias.find(":"), 1, "-"); 
-  std::string room_alias = "#" + from_alias + "-" + to_alias + ":" + _config.home_server;
+  std::string room_alias = MatrixUtils::get_room_alias(from_matrix_user, to_matrix_user, _config.home_server);
   rc = _config.connection->get_room_for_alias(room_alias,
                                               _room_id,
                                               trail());
@@ -423,7 +350,7 @@ void MatrixTsx::on_rx_in_dialog_request(pjsip_msg* req)
     }
   }
 
-  pjsip_uri* from_uri = get_from_uri(req);
+  pjsip_uri* from_uri = MatrixUtils::get_from_uri(req);
   if (from_uri == NULL)
   {
     pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
@@ -431,7 +358,7 @@ void MatrixTsx::on_rx_in_dialog_request(pjsip_msg* req)
     free_msg(req);
     return;
   }
-  std::string from_matrix_user = ims_uri_to_matrix_user(from_uri);
+  std::string from_matrix_user = MatrixUtils::ims_uri_to_matrix_user(from_uri, _config.home_server);
 
   // Get the call ID.
   pjsip_cid_hdr* call_id_hdr = (pjsip_cid_hdr*)pjsip_msg_find_hdr_by_name(req,

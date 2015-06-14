@@ -10,7 +10,8 @@ TARGET := matrix-gateway.so
 TARGET_SOURCES := matrix.cpp \
                   matrixconnection.cpp \
                   matrixhandlers.cpp \
-                  matrixplugin.cpp
+                  matrixplugin.cpp \
+                  matrixutils.cpp
 
 CPPFLAGS += -Wno-write-strings \
             -ggdb3 -std=c++0x

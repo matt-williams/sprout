@@ -36,9 +36,49 @@
 
 #include "matrixhandlers.h"
 #include "matrix.h"
+#include "matrixutils.h"
 #include "httpconnection.h"
 #include "json_parse_utils.h"
 #include <boost/algorithm/string/predicate.hpp>
+#include "sproutletproxy.h"
+
+const pjsip_method METHOD_MESSAGE = {(pjsip_method_e)PJSIP_OTHER_METHOD, {"MESSAGE", 7}};
+const pj_str_t STR_MIME_TYPE = pj_str((char*)"text");
+const pj_str_t STR_MIME_SUBTYPE = pj_str((char*)"plain");
+
+pj_status_t create_message(pjsip_tx_data*& req,
+                           std::string from_uri,
+                           std::string to_uri,
+                           std::string message)
+{
+  LOG_DEBUG("Creating SIP MESSAGE for %s=>%s: %s", from_uri.c_str(), to_uri.c_str(), message.c_str());
+  pj_str_t from;
+  pj_str_t to;
+  pj_cstr(&from, from_uri.c_str());
+  pj_cstr(&to, to_uri.c_str());
+  pj_status_t status = pjsip_endpt_create_request(stack_data.endpt,
+                                                  &METHOD_MESSAGE,
+                                                  &to,
+                                                  &from,
+                                                  &to,
+                                                  &from,
+                                                  NULL,
+                                                  1,
+                                                  NULL,
+                                                  &req);
+  LOG_DEBUG("pjsip_endpt_create_request returns %s", PJUtils::pj_status_to_string(status).c_str());
+  if (status == PJ_SUCCESS)
+  {
+    pj_str_t body;
+    pj_cstr(&body, message.c_str());
+    req->msg->body = pjsip_msg_body_create(req->pool, &STR_MIME_TYPE, &STR_MIME_SUBTYPE, &body);
+  }
+
+  // Remove spurious top Via.
+  PJUtils::remove_top_via(req);
+
+  return status;
+}
 
 //
 // MatrixTransactionHandler methods.
@@ -73,10 +113,40 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
         JSON_GET_STRING_MEMBER((*events)["content"], "membership", membership);
         if (membership == "invite")
         {
-          std::string user;
-          JSON_GET_STRING_MEMBER(*events, "state_key", user);
+          std::string inviting_user;
+          JSON_GET_STRING_MEMBER(*events, "user_id", inviting_user);
 
-          HTTPCode rc = _matrix->connection()->join_room(user, room);
+          std::string invited_user;
+          JSON_GET_STRING_MEMBER(*events, "state_key", invited_user);
+
+          HTTPCode rc = _matrix->connection()->join_room(invited_user, room, trail);
+          std::string room_alias = MatrixUtils::get_room_alias(invited_user, inviting_user, _matrix->home_server());
+
+          rc = _matrix->connection()->create_alias(room, room_alias, trail);
+        }
+      }
+      else if (type == "m.room.message")
+      {
+        std::string user;
+        JSON_GET_STRING_MEMBER(*events, "user_id", user);
+
+        std::string message;
+        JSON_ASSERT_CONTAINS(*events, "content");
+        JSON_ASSERT_OBJECT((*events)["content"]);
+        JSON_GET_STRING_MEMBER((*events)["content"], "body", message);
+
+        if (user != "@sip_6505550812:matrix.mirw.cw-ngv.com")
+        {
+          pjsip_tx_data* req;
+          pj_status_t status = create_message(req,
+                                              MatrixUtils::matrix_user_to_ims_uri(user),
+                                              //TODO: Fix this! MatrixUtils::matrix_user_to_ims_uri(user),
+                                              "sip:6505550812@mirw.cw-ngv.com",
+                                              message);
+          if (status == PJ_SUCCESS)
+          {
+            _matrix->get_proxy()->create_uas_tsx(req, "scscf", trail);
+          }
         }
       }
       else
