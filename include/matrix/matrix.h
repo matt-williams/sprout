@@ -86,6 +86,7 @@ public:
   void remove_tsx(std::string room_id);
 
   MatrixConnection* connection() { return &_connection; }
+  const std::string& home_server() { return _home_server; }
 
 private:
   std::string _home_server;
@@ -129,11 +130,6 @@ public:
   void add_call_id_to_trail(SAS::TrailId trail);
 
 private:
-  std::string ims_uri_to_matrix_user(pjsip_uri* uri);
-  std::string matrix_uri_to_matrix_user(pjsip_uri* uri);
-  std::string matrix_user_to_userpart(std::string user);
-  void parse_sdp(const std::string& body, std::string& sdp, std::vector<std::string>& candidates);
-  pjsip_uri* get_from_uri(pjsip_msg* req);
   void add_record_route(pjsip_msg* msg);
   void add_contact(pjsip_msg* msg, pjsip_uri* uri);
 

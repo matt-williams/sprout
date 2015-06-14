@@ -58,6 +58,7 @@ extern "C" {
 class SproutletTsxHelper;
 class Sproutlet;
 class SproutletTsx;
+class SproutletProxy;
 
 
 /// Typedefs for Sproutlet-specific types
@@ -577,6 +578,9 @@ public:
   virtual const std::list<std::string> aliases() const
     { return std::list<std::string>(); }
 
+  void set_proxy(SproutletProxy* proxy) { _proxy = proxy; }
+  SproutletProxy* get_proxy() { return _proxy; }
+
 protected:
   /// Constructor.
   Sproutlet(const std::string& service_name,
@@ -597,6 +601,8 @@ private:
 
   /// The host name of this service.
   const std::string _service_host;
+
+  SproutletProxy* _proxy;
 };
 
 #endif

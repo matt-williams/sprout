@@ -78,7 +78,8 @@ public:
   static void on_timer_pop(pj_timer_heap_t* th, pj_timer_entry* tentry);
 
   /// Create an internally-initiated Sproutlet UAS transaction object.
-  BasicProxy::UASTsx* create_int_uas_tsx();
+  BasicProxy::UASTsx* create_uas_tsx(pjsip_tx_data*, std::string, SAS::TrailId);
+  Sproutlet* get_sproutlet(const std::string& alias);
 
 protected:
   /// Pre-declaration
@@ -173,10 +174,10 @@ protected:
     /// The root Sproutlet for this transaction.
     SproutletWrapper* _root;
 
-  private:
     /// Parent proxy object
     SproutletProxy* _sproutlet_proxy;
 
+  private:
     /// Templated type used to map from upstream Sproutlet/fork to the
     /// downstream Sproutlet or UACTsx.
     template<typename T>
@@ -252,7 +253,7 @@ protected:
     friend class SproutletWrapper;
   };
 
-  class IntUASTsx : public BasicProxy::UASTsx, public UASTsxMixin
+  class IntUASTsx : public BasicProxy::UASTsxImpl, public UASTsxMixin
   {
   public:
     /// Constructor.
@@ -263,6 +264,7 @@ protected:
 
     /// Initializes the UAS transaction.
     virtual pj_status_t init(pjsip_rx_data* rdata);
+    pj_status_t init(pjsip_tx_data* req, std::string alias, SAS::TrailId trail);
 
     /// Handle the incoming half of a transaction request.
     virtual void process_tsx_request(pjsip_rx_data* rdata);
