@@ -49,6 +49,7 @@ const std::string MatrixConnection::EVENT_TYPE_CALL_INVITE = "m.call.invite";
 const std::string MatrixConnection::EVENT_TYPE_CALL_CANDIDATES = "m.call.candidates";
 const std::string MatrixConnection::EVENT_TYPE_CALL_ANSWER = "m.call.answer";
 const std::string MatrixConnection::EVENT_TYPE_CALL_HANGUP = "m.call.hangup";
+const std::string MatrixConnection::EVENT_TYPE_MESSAGE = "m.room.message";
 
 MatrixConnection::MatrixConnection(const std::string& home_server,
                                    const std::string& as_token,
@@ -388,6 +389,23 @@ std::string MatrixConnection::build_call_hangup_event(const std::string& call_id
     
     writer.String("call_id");
     writer.String(call_id.c_str());
+  }
+  writer.EndObject();
+
+  return sb.GetString();
+}
+
+std::string MatrixConnection::build_message_event(const std::string& message)
+{
+  rapidjson::StringBuffer sb;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
+  writer.StartObject();
+  {
+    writer.String("msgtype");
+    writer.String("m.text");
+    
+    writer.String("body");
+    writer.String(message.c_str());
   }
   writer.EndObject();
 

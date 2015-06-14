@@ -260,27 +260,54 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   int expires = (expires_hdr != NULL) ? expires_hdr->ivalue : 180;
   _expires = expires;
 
-  // Get the SDP body.
-  if (req->body == NULL ||
-      (pj_stricmp2(&req->body->content_type.type, "application") != 0) ||
-      (pj_stricmp2(&req->body->content_type.subtype, "sdp") != 0))
+  // Get the SDP body (if an INVITE).
+  if (req->line.req.method.id == PJSIP_INVITE_METHOD)
   {
-    LOG_DEBUG("No SDP body");
+    if ((req->body == NULL ||
+        (pj_stricmp2(&req->body->content_type.type, "application") != 0) ||
+        (pj_stricmp2(&req->body->content_type.subtype, "sdp") != 0)))
+    {
+      LOG_DEBUG("No SDP body");
+      pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
+      send_response(rsp);
+      free_msg(req);
+      return;
+    }
+    //std::string body = std::string((const char*)req->body->data, req->body->len);
+    //std::string sdp;
+    //std::vector<std::string> candidates;
+    //parse_sdp(body, sdp, candidates);
+    std::string sdp = std::string((const char*)req->body->data, req->body->len);
+    _event_type = MatrixConnection::EVENT_TYPE_CALL_INVITE;
+    _event = _config.connection->build_call_invite_event(_call_id, sdp, _expires * 1000);
+  }
+  else if (!pj_strcmp2(&req->line.req.method.name, "MESSAGE"))
+  {
+    if ((req->body == NULL ||
+        (pj_stricmp2(&req->body->content_type.type, "text") != 0) ||
+        (pj_stricmp2(&req->body->content_type.subtype, "plain") != 0)))
+    {
+      LOG_DEBUG("No text/plan MESSAGE body");
+      pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
+      send_response(rsp);
+      free_msg(req);
+      return;
+    }
+    std::string message = std::string((const char*)req->body->data, req->body->len);
+    _event_type = MatrixConnection::EVENT_TYPE_MESSAGE;
+    _event = _config.connection->build_message_event(message);
+  }
+  else
+  {
+    LOG_DEBUG("Unsupported method: %.*s", req->line.req.method.name.slen, req->line.req.method.name.ptr);
     pjsip_msg* rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
     send_response(rsp);
     free_msg(req);
     return;
   }
-  //std::string body = std::string((const char*)req->body->data, req->body->len);
-  //std::string sdp;
-  //std::vector<std::string> candidates;
-  //parse_sdp(body, sdp, candidates);
-  std::string sdp = std::string((const char*)req->body->data, req->body->len);
-  _offer_sdp = sdp;
 
   LOG_DEBUG("Call from %s (%s) to %s (%s)", PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, from_uri).c_str(), from_matrix_user.c_str(), PJUtils::uri_to_string(PJSIP_URI_IN_REQ_URI, to_uri).c_str(), to_matrix_user.c_str());
   LOG_DEBUG("Call ID is %s, expiry is %d", call_id.c_str(), expires);
-  LOG_DEBUG("SDP is %s", sdp.c_str());
 
   HTTPCode rc = _config.connection->register_user(matrix_user_to_userpart(from_matrix_user),
                                                   trail());
@@ -320,13 +347,10 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
                                     _room_id,
                                     trail());
 
-    std::string call_invite_event = _config.connection->build_call_invite_event(_call_id,
-                                                                                _offer_sdp,
-                                                                                _expires * 1000);
     rc = _config.connection->send_event(_from_matrix_user,
                                         _room_id,
-                                        MatrixConnection::EVENT_TYPE_CALL_INVITE,
-                                        call_invite_event,
+                                        _event_type,
+                                        _event,
                                         trail());
   }
 
@@ -340,14 +364,24 @@ void MatrixTsx::on_rx_initial_request(pjsip_msg* req)
   //                                    call_candidates_event,
   //                                    trail());
 
-  // TODO Only signal ringing when event is published or user enters room?
-  pjsip_msg* rsp = create_response(req, PJSIP_SC_RINGING);
-  add_record_route(rsp);
-  add_contact(rsp, req->line.req.uri);
-  send_response(rsp);
-  free_msg(req);
 
-  schedule_timer(NULL, _timer_request, expires * 1000);
+  if (_event_type == MatrixConnection::EVENT_TYPE_CALL_INVITE)
+  {
+    pjsip_msg* rsp = create_response(req, PJSIP_SC_RINGING);
+    add_record_route(rsp);
+    add_contact(rsp, req->line.req.uri);
+    send_response(rsp);
+    free_msg(req);
+    schedule_timer(NULL, _timer_request, expires * 1000);
+  }
+  else
+  {
+    pjsip_msg* rsp = create_response(req, PJSIP_SC_OK);
+    add_record_route(rsp);
+    add_contact(rsp, req->line.req.uri);
+    send_response(rsp);
+    free_msg(req);
+  }
 }
 
 /// Matrix receives a response. It will add all the Via headers from the
@@ -433,14 +467,12 @@ void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& user
   if ((type == "m.room.member") &&
       (user != _from_matrix_user))
   {
-    // TODO: Adjust expires according to time passed
-    std::string call_invite_event = _config.connection->build_call_invite_event(_call_id,
-                                                                                _offer_sdp,
-                                                                                _expires * 1000);
+    // TODO: Might not need this any more
+    // TODO: Adjust expires of INVITE event according to time passed
     HTTPCode rc = _config.connection->send_event(_from_matrix_user,
                                                  _room_id,
                                                  MatrixConnection::EVENT_TYPE_CALL_INVITE,
-                                                 call_invite_event,
+                                                 _event,
                                                  trail());
   }
   else if (type == "m.call.answer")
