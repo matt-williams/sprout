@@ -1103,6 +1103,7 @@ pj_status_t SproutletProxy::IntUASTsx::init(pjsip_tx_data* req, std::string alia
     return status;
     // LCOV_EXCL_STOP
   }
+  pj_grp_lock_add_ref(_lock);
 
   // TODO: any start of transaction logging operations.
 
