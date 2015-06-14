@@ -144,7 +144,8 @@ private:
   std::string _from_matrix_user;
   std::string _call_id;
   std::string _room_id;
-  std::string _offer_sdp;
+  std::string _event_type;
+  std::string _event;
   std::string _answer_sdp;
   int _expires;
 };

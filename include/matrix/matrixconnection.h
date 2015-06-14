@@ -61,6 +61,7 @@ public:
   static const std::string EVENT_TYPE_CALL_CANDIDATES;
   static const std::string EVENT_TYPE_CALL_ANSWER;
   static const std::string EVENT_TYPE_CALL_HANGUP;
+  static const std::string EVENT_TYPE_MESSAGE;
 
   MatrixConnection(const std::string& home_server,
                    const std::string& as_token,
@@ -93,6 +94,7 @@ public:
   std::string build_call_answer_event(const std::string& call_id,
                                       const std::string& sdp);
   std::string build_call_hangup_event(const std::string& call_id);
+  std::string build_message_event(const std::string& message);
   HTTPCode send_event(const std::string& user,
                       const std::string& room,
                       const std::string& event_type,
