@@ -50,7 +50,6 @@
 #include "basicproxy.h"
 #include "sproutlet.h"
 
-
 class SproutletWrapper;
 
 class SproutletProxy : public BasicProxy
@@ -78,7 +77,7 @@ public:
   static void on_timer_pop(pj_timer_heap_t* th, pj_timer_entry* tentry);
 
   /// Create an internally-initiated Sproutlet UAS transaction object.
-  BasicProxy::UASTsx* create_uas_tsx(pjsip_tx_data*, std::string, SAS::TrailId);
+  SproutletTsx* create_uas_tsx(pjsip_tx_data*, std::string, SAS::TrailId);
   Sproutlet* get_sproutlet(const std::string& alias);
 
 protected:
@@ -169,6 +168,8 @@ protected:
     virtual pj_status_t create_uac(pjsip_tx_data* tdata, UACTsx*& uac_tsx) = 0;
 
     void schedule_requests();
+
+    SproutletTsx* root_sproutlet();
 
   protected:
     /// The root Sproutlet for this transaction.
@@ -309,7 +310,6 @@ protected:
 
   friend class SproutletWrapper;
 };
-
 
 class SproutletWrapper : public SproutletTsxHelper
 {

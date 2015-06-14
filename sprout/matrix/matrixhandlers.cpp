@@ -43,8 +43,10 @@
 #include "sproutletproxy.h"
 
 const pjsip_method METHOD_MESSAGE = {(pjsip_method_e)PJSIP_OTHER_METHOD, {"MESSAGE", 7}};
-const pj_str_t STR_MIME_TYPE = pj_str((char*)"text");
-const pj_str_t STR_MIME_SUBTYPE = pj_str((char*)"plain");
+const pj_str_t STR_MIME_TYPE_TEXT = pj_str((char*)"text");
+const pj_str_t STR_MIME_SUBTYPE_PLAIN = pj_str((char*)"plain");
+const pj_str_t STR_MIME_TYPE_APPLICATION = pj_str((char*)"application");
+const pj_str_t STR_MIME_SUBTYPE_SDP = pj_str((char*)"sdp");
 
 pj_status_t create_message(pjsip_tx_data*& req,
                            std::string from_uri,
@@ -71,7 +73,41 @@ pj_status_t create_message(pjsip_tx_data*& req,
   {
     pj_str_t body;
     pj_cstr(&body, message.c_str());
-    req->msg->body = pjsip_msg_body_create(req->pool, &STR_MIME_TYPE, &STR_MIME_SUBTYPE, &body);
+    req->msg->body = pjsip_msg_body_create(req->pool, &STR_MIME_TYPE_TEXT, &STR_MIME_SUBTYPE_PLAIN, &body);
+  }
+
+  // Remove spurious top Via.
+  PJUtils::remove_top_via(req);
+
+  return status;
+}
+
+pj_status_t create_invite(pjsip_tx_data*& req,
+                          std::string from_uri,
+                          std::string to_uri,
+                          std::string sdp)
+{
+  LOG_DEBUG("Creating SIP INVITE for %s=>%s: %s", from_uri.c_str(), to_uri.c_str(), sdp.c_str());
+  pj_str_t from;
+  pj_str_t to;
+  pj_cstr(&from, from_uri.c_str());
+  pj_cstr(&to, to_uri.c_str());
+  pj_status_t status = pjsip_endpt_create_request(stack_data.endpt,
+                                                  pjsip_get_invite_method(),
+                                                  &to,
+                                                  &from,
+                                                  &to,
+                                                  &from,
+                                                  NULL,
+                                                  1,
+                                                  NULL,
+                                                  &req);
+  LOG_DEBUG("pjsip_endpt_create_request returns %s", PJUtils::pj_status_to_string(status).c_str());
+  if (status == PJ_SUCCESS)
+  {
+    pj_str_t body;
+    pj_cstr(&body, sdp.c_str());
+    req->msg->body = pjsip_msg_body_create(req->pool, &STR_MIME_TYPE_APPLICATION, &STR_MIME_SUBTYPE_SDP, &body);
   }
 
   // Remove spurious top Via.
@@ -127,25 +163,27 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
       }
       else if (type == "m.room.message")
       {
-        std::string user;
-        JSON_GET_STRING_MEMBER(*events, "user_id", user);
+        std::string from_user;
+        JSON_GET_STRING_MEMBER(*events, "user_id", from_user);
+
+        std::string to_user = "@sip_6505550812:matrix.mirw.cw-ngv.com"; // TODO: fix this!
+        std::string to_uri = "sip:6505550812@mirw.cw-ngv.com"; // TODO: MatrixUtils::matrix_user_to_ims_uri(to_user)
 
         std::string message;
         JSON_ASSERT_CONTAINS(*events, "content");
         JSON_ASSERT_OBJECT((*events)["content"]);
         JSON_GET_STRING_MEMBER((*events)["content"], "body", message);
 
-        if (user != "@sip_6505550812:matrix.mirw.cw-ngv.com")
+        if (from_user != to_user)
         {
           pjsip_tx_data* req;
           pj_status_t status = create_message(req,
-                                              MatrixUtils::matrix_user_to_ims_uri(user),
-                                              //TODO: Fix this! MatrixUtils::matrix_user_to_ims_uri(user),
-                                              "sip:6505550812@mirw.cw-ngv.com",
+                                              MatrixUtils::matrix_user_to_ims_uri(from_user),
+                                              to_uri,
                                               message);
           if (status == PJ_SUCCESS)
           {
-            _matrix->get_proxy()->create_uas_tsx(req, "scscf", trail);
+            MatrixOutboundTsx* matrix_tsx = (MatrixOutboundTsx*)_matrix->get_proxy()->create_uas_tsx(req, "scscf", trail);
           }
         }
       }
@@ -183,6 +221,42 @@ void MatrixTransactionHandler::process_request(HttpStack::Request& req,
             }
           }
           tsx->rx_matrix_event(type, user, call_id, sdp);
+        }
+        else if (type == "m.call.invite")
+        {
+          std::string from_user;
+          JSON_GET_STRING_MEMBER(*events, "user_id", from_user);
+
+          std::string to_user = "@sip_6505550812:matrix.mirw.cw-ngv.com"; // TODO: fix this!
+          std::string to_uri = "sip:6505550812@mirw.cw-ngv.com"; // TODO: MatrixUtils::matrix_user_to_ims_uri(to_user)
+
+          JSON_ASSERT_CONTAINS(*events, "content");
+          JSON_ASSERT_OBJECT((*events)["content"]);
+
+          std::string call_id;
+          JSON_GET_STRING_MEMBER((*events)["content"], "call_id", call_id);
+
+          std::string sdp;
+          JSON_ASSERT_CONTAINS((*events)["content"], "offer");
+          JSON_ASSERT_OBJECT((*events)["content"]["offer"]);
+          JSON_GET_STRING_MEMBER((*events)["content"]["offer"], "sdp", sdp);
+
+          if (from_user != to_user)
+          {
+            pjsip_tx_data* req;
+            pj_status_t status = create_invite(req,
+                                               MatrixUtils::matrix_user_to_ims_uri(from_user),
+                                               to_uri,
+                                               sdp);
+            if (status == PJ_SUCCESS)
+            {
+              MatrixOutboundTsx* tsx = (MatrixOutboundTsx*)_matrix->get_proxy()->create_uas_tsx(req, "scscf", trail);
+              LOG_DEBUG("tsx = %p", tsx);
+              //tsx->set_user(to_user);
+              //tsx->set_room_id(room);
+              //tsx->set_call_id(call_id);
+            }
+          }
         }
         else
         {

@@ -112,7 +112,7 @@ BasicProxy::UASTsx* SproutletProxy::create_uas_tsx()
   return (BasicProxy::UASTsx*)new SproutletProxy::ExtUASTsx(this);
 }
 
-BasicProxy::UASTsx* SproutletProxy::create_uas_tsx(pjsip_tx_data* req, std::string alias, SAS::TrailId trail)
+SproutletTsx* SproutletProxy::create_uas_tsx(pjsip_tx_data* req, std::string alias, SAS::TrailId trail)
 {
   SproutletProxy::IntUASTsx* uas_tsx = new SproutletProxy::IntUASTsx(this);
   pj_status_t status = uas_tsx->init(req, alias, trail);
@@ -121,7 +121,7 @@ BasicProxy::UASTsx* SproutletProxy::create_uas_tsx(pjsip_tx_data* req, std::stri
     delete uas_tsx; uas_tsx = NULL;
   }
 
-  return uas_tsx;
+  return uas_tsx->root_sproutlet();
 }
 
 
@@ -1087,6 +1087,10 @@ pj_status_t SproutletProxy::IntUASTsx::init(pjsip_rx_data* rdata)
   return status;
 }
 
+SproutletTsx* SproutletProxy::UASTsxMixin::root_sproutlet()
+{
+  return _root->_sproutlet_tsx;
+}
 
 // TODO: Refactor!!!!
 /// Initializes the UASTsx object to handle proxying of the request.

@@ -158,3 +158,18 @@ std::string MatrixUtils::get_room_alias(const std::string& ims_matrix_user, cons
   other_alias = other_alias.replace(other_alias.find(":"), 1, "-"); 
   return "#call-" + ims_alias + "-" + other_alias + ":" + home_server;
 }
+
+void MatrixUtils::add_record_route(pjsip_msg* msg, pj_pool_t* pool, pjsip_sip_uri* uri, const std::string& room_id)
+{
+  pjsip_param* param = PJ_POOL_ALLOC_T(pool, pjsip_param);
+  pj_strdup2(pool, &param->name, "room");
+  pj_strdup2(pool, &param->value, room_id.c_str());
+
+  pj_list_insert_before(&uri->other_param, param);
+
+  pjsip_route_hdr* rr = pjsip_rr_hdr_create(pool);
+  rr->name_addr.uri = (pjsip_uri*)uri;
+
+  pjsip_msg_insert_first_hdr(msg, (pjsip_hdr*)rr);
+}
+
