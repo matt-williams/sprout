@@ -61,6 +61,7 @@ namespace MatrixUtils
   void parse_sdp(const std::string& body, std::string& sdp, std::vector<std::string>& candidates);
   pjsip_uri* get_from_uri(pjsip_msg* req);
   std::string get_room_alias(const std::string& ims_matrix_user, const std::string& other_matrix_user, const std::string& home_server);
+  void add_record_route(pjsip_msg* msg, pj_pool_t* pool, pjsip_sip_uri* uri, const std::string& room_id);
 };
 
 #endif

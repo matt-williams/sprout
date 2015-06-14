@@ -146,4 +146,45 @@ private:
   int _expires;
 };
 
+/// Definition of the MatrixTsx class.
+class MatrixOutboundTsx : public SproutletTsx
+{
+public:
+  /// Config object for a MatrixOutboundTsx. Sets sensible defaults for all the
+  /// fields.
+  class Config
+  {
+  public:
+    Config(Matrix* _matrix, std::string _home_server, MatrixConnection* _connection) :
+      matrix(_matrix), home_server(_home_server), connection(_connection) {}
+    ~Config() {}
+    Matrix* matrix;
+    const std::string home_server;
+    MatrixConnection* connection;
+  };
+
+  /// Constructor.
+  MatrixOutboundTsx(SproutletTsxHelper* helper, Config& config);
+
+  /// Destructor.
+  ~MatrixOutboundTsx() {}
+
+  /// Implementation of SproutletTsx methods in matrix.
+  virtual void on_rx_initial_request(pjsip_msg* req);
+  virtual void on_rx_response(pjsip_msg* rsp, int fork_id);
+  virtual void on_rx_in_dialog_request(pjsip_msg* req);
+
+  void set_user(const std::string& user) { _user = user; }
+  void set_room_id(const std::string& room_id) { _room_id = room_id; }
+  void set_call_id(const std::string& call_id) { _call_id = call_id; }
+
+private:
+  /// The config object for this transaction.
+  Config _config;
+  std::string _user;
+  std::string _room_id;
+  std::string _call_id;
+
+  void add_record_route(pjsip_msg* msg);
+};
 #endif

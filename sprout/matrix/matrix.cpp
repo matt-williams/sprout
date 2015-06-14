@@ -90,8 +90,8 @@ SproutletTsx* Matrix::get_tsx(SproutletTsxHelper* helper,
   }
   else if (alias == "matrix-outbound")
   {
-    //MatrixTsx::Config config(this, _home_server, &_connection);
-    //tsx = new MatrixTsx(helper, config);
+    MatrixOutboundTsx::Config config(this, _home_server, &_connection);
+    tsx = new MatrixOutboundTsx(helper, config);
   }
   return tsx;
 }
@@ -125,18 +125,7 @@ MatrixTsx::MatrixTsx(SproutletTsxHelper* helper, Config& config) :
 void MatrixTsx::add_record_route(pjsip_msg* msg)
 {
   pj_pool_t* pool = get_pool(msg);
-
-  pjsip_param* param = PJ_POOL_ALLOC_T(pool, pjsip_param);
-  pj_strdup2(pool, &param->name, "room");
-  pj_strdup2(pool, &param->value, _room_id.c_str());
-
-  pjsip_sip_uri* uri = get_reflexive_uri(pool);
-  pj_list_insert_before(&uri->other_param, param);
-
-  pjsip_route_hdr* rr = pjsip_rr_hdr_create(pool);
-  rr->name_addr.uri = (pjsip_uri*)uri;
-
-  pjsip_msg_insert_first_hdr(msg, (pjsip_hdr*)rr);
+  MatrixUtils::add_record_route(msg, pool, get_reflexive_uri(pool), _room_id);
 }
 
 void MatrixTsx::add_contact(pjsip_msg* msg, pjsip_uri* uri)
@@ -394,7 +383,7 @@ void MatrixTsx::rx_matrix_event(const std::string& type, const std::string& user
   if ((type == "m.room.member") &&
       (user != _from_matrix_user))
   {
-    // TODO: Might not need this any more
+    // TODO: Might not need this branch any more - might just be able to send imediately in all cases.
     // TODO: Adjust expires of INVITE event according to time passed
     HTTPCode rc = _config.connection->send_event(_from_matrix_user,
                                                  _room_id,
@@ -441,6 +430,8 @@ void MatrixTsx::on_timer_expiry(void* context)
   if (!_answer_sdp.empty())
   {
     rsp = create_response(req, PJSIP_SC_OK);
+    add_record_route(rsp);
+    add_contact(rsp, req->line.req.uri);
 
     pj_str_t mime_type = pj_str("application");
     pj_str_t mime_subtype = pj_str("sdp");
@@ -452,7 +443,6 @@ void MatrixTsx::on_timer_expiry(void* context)
   {
     rsp = create_response(req, PJSIP_SC_TEMPORARILY_UNAVAILABLE);
   }
-  add_record_route(rsp);
   send_response(rsp);
   free_msg(req);
 }
@@ -462,4 +452,58 @@ void MatrixTsx::add_call_id_to_trail(SAS::TrailId trail)
   SAS::Marker cid_marker(trail, MARKER_ID_SIP_CALL_ID, 1u);
   cid_marker.add_var_param(_call_id);
   SAS::report_marker(cid_marker, SAS::Marker::Scope::Trace);
+}
+
+MatrixOutboundTsx::MatrixOutboundTsx(SproutletTsxHelper* helper, Config& config) :
+  SproutletTsx(helper), _config(config)
+{
+}
+
+/// Matrix receives an initial request.
+void MatrixOutboundTsx::on_rx_initial_request(pjsip_msg* req)
+{
+  // TODO: get true S-CSCF URI - don't assume it's local
+  pj_pool_t* pool = get_pool(req);
+  pjsip_sip_uri* uri = get_reflexive_uri(pool);
+  pj_strdup2(pool, &uri->user, "scscf");
+  PJUtils::add_route_header(req, uri, get_pool(req));
+  send_request(req);
+}
+
+void MatrixOutboundTsx::on_rx_response(pjsip_msg* rsp, int fork_id)
+{
+  int st_code = rsp->line.status.code;
+
+  std::string event_type;
+  std::string event;
+
+  if (st_code == PJSIP_SC_OK)
+  {
+    std::string sdp = std::string((const char*)rsp->body->data, rsp->body->len);
+    event_type = MatrixConnection::EVENT_TYPE_CALL_INVITE;
+    event = _config.connection->build_call_answer_event(_call_id, sdp);
+  }
+  else
+  {
+    event_type = MatrixConnection::EVENT_TYPE_CALL_HANGUP;
+  }
+  HTTPCode rc = _config.connection->send_event(_user,
+                                               _room_id,
+                                               event_type,
+                                               event,
+                                               trail());
+
+  // Forward the response, although it will go into the void.
+  send_response(rsp);
+}
+
+void MatrixOutboundTsx::on_rx_in_dialog_request(pjsip_msg* req)
+{
+  send_request(req);
+}
+
+void MatrixOutboundTsx::add_record_route(pjsip_msg* msg)
+{
+  pj_pool_t* pool = get_pool(msg);
+  MatrixUtils::add_record_route(msg, pool, get_reflexive_uri(pool), _room_id);
 }
