@@ -64,3 +64,7 @@
 [submodule "clearwater-etcd-plugins"]
 	path = modules/clearwater-etcd-plugins
 	url = git@github.com:Metaswitch/clearwater-etcd-plugins.git
+[submodule "modules/rlite"]
+	path = modules/rlite
+	url = git@github.com:vmaffione/rlite.git
+	branch = next
