@@ -250,6 +250,7 @@ SPROUT_COMMON_LDFLAGS := -rdynamic \
                          -levent \
                          -levent_pthreads \
                          -lcurl \
+                         ../usr/lib/librina-api.so \
                          -lsas \
                          -lz \
                          -lpthread \

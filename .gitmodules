@@ -36,10 +36,10 @@
 	url = git@github.com:Metaswitch/sas-client.git
 [submodule "modules/cpp-common"]
 	path = modules/cpp-common
-	url = git@github.com:Metaswitch/cpp-common.git
+	url = git@github.com:matt-williams/cpp-common.git
 [submodule "modules/libevhtp"]
 	path = modules/libevhtp
-	url = git@github.com:Metaswitch/libevhtp.git
+	url = git@github.com:matt-williams/libevhtp.git
 [submodule "modules/gcovr"]
 	path = modules/gcovr
 	url = git@github.com:gcovr/gcovr.git
