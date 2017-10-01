@@ -172,6 +172,8 @@ get_daemon_args()
         [ -z "$chronos_hostname" ] || chronos_hostname_arg="--chronos-hostname=$chronos_hostname"
         [ -z "$sprout_chronos_callback_uri" ] || sprout_chronos_callback_uri_arg="--sprout-chronos-callback-uri=$sprout_chronos_callback_uri"
         [ -z "$dummy_app_server" ] || dummy_app_server_arg="--dummy-app-server=$dummy_app_server"
+        [ -z "$rina_local_appl" ] || rina_local_appl_arg="--rina-local-appl=$rina_local_appl"
+        [ -z "$rina_remote_appl" ] || rina_remote_appl_arg="--rina-remote-appl=$rina_remote_appl"
 
         DAEMON_ARGS="
                      --domain=$home_domain
@@ -221,7 +223,9 @@ get_daemon_args()
                      --log-file=$log_directory
                      --log-level=$log_level
                      --alias=$public_ip,$public_hostname,$alias_list
-                     --homestead-timeout=$sprout_homestead_timeout_ms"
+                     --homestead-timeout=$sprout_homestead_timeout_ms
+                     $rina_local_appl_arg
+                     $rina_remote_appl_arg"
 
         if [ -n "$reg_max_expires" ]
         then

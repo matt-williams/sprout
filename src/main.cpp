@@ -141,6 +141,8 @@ enum OptionTypes
   OPT_DUMMY_APP_SERVER,
   OPT_HTTP_ACR_LOGGING,
   OPT_HOMESTEAD_TIMEOUT,
+  OPT_RINA_LOCAL_APPL,
+  OPT_RINA_REMOTE_APPL,
 };
 
 
@@ -230,6 +232,8 @@ const static struct pj_getopt_option long_opt[] =
   { "dummy-app-server",             required_argument, 0, OPT_DUMMY_APP_SERVER},
   { "http-acr-logging",             no_argument,       0, OPT_HTTP_ACR_LOGGING},
   { "homestead-timeout",            required_argument, 0, OPT_HOMESTEAD_TIMEOUT},
+  { "rina-local-appl",              required_argument, 0, OPT_RINA_LOCAL_APPL},
+  { "rina-remote-appl",             required_argument, 0, OPT_RINA_REMOTE_APPL},
   { NULL,                           0,                 0, 0}
 };
 
@@ -1272,6 +1276,14 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       }
       break;
 
+    case OPT_RINA_LOCAL_APPL:
+      options->rina_local_appl = std::string(pj_optarg);
+      break;
+
+    case OPT_RINA_REMOTE_APPL:
+      options->rina_remote_appl = std::string(pj_optarg);
+      break;
+
     case OPT_LISTEN_PORT:
       {
         int listen_port;
@@ -1297,7 +1309,7 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       return -1;
 
     default:
-      TRC_ERROR("Unknown option. Run with --help for help.");
+      TRC_ERROR("Unknown option (%d). Run with --help for help.", c);
       return -1;
     }
   }
@@ -1719,6 +1731,8 @@ int main(int argc, char* argv[])
   opt.dummy_app_server = "";
   opt.http_acr_logging = false;
   opt.homestead_timeout = 750;
+  opt.rina_local_appl = "sprout.IPCP";
+  opt.rina_remote_appl = "homestead-server";
 
   status = init_logging_options(argc, argv, &opt);
 
@@ -2107,7 +2121,9 @@ int main(int argc, char* argv[])
                                        homestead_lir_latency_table,
                                        hss_comm_monitor,
                                        sifc_service,
-                                       opt.homestead_timeout);
+                                       opt.homestead_timeout,
+                                       opt.rina_local_appl,
+                                       opt.rina_remote_appl);
   }
 
   // Create FIFC service

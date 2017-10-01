@@ -142,6 +142,8 @@ struct options
   std::string                          dummy_app_server;
   bool                                 http_acr_logging;
   int                                  homestead_timeout;
+  std::string                          rina_local_appl;
+  std::string                          rina_remote_appl;
 };
 
 // Objects that must be shared with dynamically linked sproutlets must be

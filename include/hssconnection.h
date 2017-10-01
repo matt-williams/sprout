@@ -43,7 +43,9 @@ public:
                 SNMP::EventAccumulatorTable* homestead_lir_latency_tbl,
                 CommunicationMonitor* comm_monitor,
                 SIFCService* sifc_service,
-                long homestead_timeout_ms);
+                long homestead_timeout_ms,
+                const std::string& local_appl,
+                const std::string& remote_appl);
   virtual ~HSSConnection();
 
   HTTPCode get_auth_vector(const std::string& private_user_id,
