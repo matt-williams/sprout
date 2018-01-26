@@ -46,7 +46,9 @@ ICSCFSproutlet::ICSCFSproutlet(const std::string& icscf_name,
                                EnumService* enum_service,
                                SNMP::SuccessFailCountByRequestTypeTable* incoming_sip_transactions_tbl,
                                SNMP::SuccessFailCountByRequestTypeTable* outgoing_sip_transactions_tbl,
-                               bool override_npdi) :
+                               bool override_npdi,
+                               int network_function_port,
+                               std::set<std::string> blacklisted_scscfs) :
   Sproutlet(icscf_name,
             port,
             uri,
@@ -62,7 +64,9 @@ ICSCFSproutlet::ICSCFSproutlet(const std::string& icscf_name,
   _acr_factory(acr_factory),
   _enum_service(enum_service),
   _override_npdi(override_npdi),
-  _bgcf_uri_str(bgcf_uri)
+  _bgcf_uri_str(bgcf_uri),
+  _network_function_port(network_function_port),
+  _blacklisted_scscfs(blacklisted_scscfs)
 {
   _session_establishment_tbl = SNMP::SuccessFailCountTable::create("icscf_session_establishment",
                                                                    "1.2.826.0.1.1578918.9.3.36");
@@ -96,7 +100,6 @@ bool ICSCFSproutlet::init()
 
   return init_success;
 }
-
 
 /// Creates a ICSCFSproutletTsx instance for performing I-CSCF service processing
 /// on a request.
@@ -187,7 +190,20 @@ void ICSCFSproutletRegTsx::on_rx_initial_request(pjsip_msg* req)
   // Get the public identity from the To: header.
   pjsip_to_hdr* to_hdr = PJSIP_MSG_TO_HDR(req);
   pjsip_uri* to_uri = (pjsip_uri*)pjsip_uri_get_uri(to_hdr->uri);
-  impu = PJUtils::public_id_from_uri(to_uri);
+  pj_bool_t status = PJUtils::valid_public_id_from_uri(to_uri, impu);
+
+  if (!status)
+  {
+    // We're unable to get the IMPU from the message - reject it now
+    SAS::Event event(trail(), SASEvent::ICSCF_INVALID_IMPU, 0);
+    event.add_var_param(PJUtils::uri_to_string(PJSIP_URI_IN_FROMTO_HDR, to_uri));
+    SAS::report_event(event);
+
+    pjsip_msg* rsp = create_response(req, PJSIP_SC_BAD_REQUEST);
+    send_response(rsp);
+    free_msg(req);
+    return;
+  }
 
   SAS::Event reg_event(trail(), SASEvent::ICSCF_RCVD_REGISTER, 0);
   reg_event.add_var_param(impu);
@@ -268,12 +284,13 @@ void ICSCFSproutletRegTsx::on_rx_initial_request(pjsip_msg* req)
                                             _icscf->get_scscf_selector(),
                                             trail(),
                                             _acr,
-                                            _icscf->port(),
+                                            _icscf->network_function_port(),
                                             impi,
                                             impu,
                                             visited_network,
                                             auth_type,
-                                            emergency);
+                                            emergency,
+                                            _icscf->_blacklisted_scscfs);
 
   // We have a router, query it for an S-CSCF to use.
   pjsip_sip_uri* scscf_sip_uri = NULL;
@@ -505,7 +522,22 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
     // Originating request.
     TRC_DEBUG("Originating request");
     _originating = true;
-    impu = PJUtils::public_id_from_uri(PJUtils::orig_served_user(req));
+
+    pjsip_uri* orig_uri = PJUtils::orig_served_user(req, pool, trail());
+    pj_bool_t status = PJUtils::valid_public_id_from_uri(orig_uri, impu);
+
+    if (!status)
+    {
+      // We're unable to get the IMPU from the message - reject it now
+      SAS::Event event(trail(), SASEvent::ICSCF_INVALID_IMPU, 1);
+      event.add_var_param(PJUtils::uri_to_string(PJSIP_URI_IN_FROMTO_HDR, orig_uri));
+      SAS::report_event(event);
+
+      pjsip_msg* rsp = create_response(req, PJSIP_SC_BAD_REQUEST);
+      send_response(rsp);
+      free_msg(req);
+      return;
+    }
 
     SAS::Event event(trail(), SASEvent::ICSCF_RCVD_ORIG_NON_REG, 0);
     event.add_var_param(impu);
@@ -536,7 +568,21 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
       }
     }
 
-    impu = PJUtils::public_id_from_uri(PJUtils::term_served_user(req));
+    pjsip_uri* term_uri = PJUtils::term_served_user(req);
+    pj_bool_t status = PJUtils::valid_public_id_from_uri(term_uri, impu);
+
+    if (!status)
+    {
+      // We're unable to get the IMPU from the message - reject it now
+      SAS::Event event(trail(), SASEvent::ICSCF_INVALID_IMPU, 2);
+      event.add_var_param(PJUtils::uri_to_string(PJSIP_URI_IN_FROMTO_HDR, term_uri));
+      SAS::report_event(event);
+
+      pjsip_msg* rsp = create_response(req, PJSIP_SC_BAD_REQUEST);
+      send_response(rsp);
+      free_msg(req);
+      return;
+    }
 
     SAS::Event event(trail(), SASEvent::ICSCF_RCVD_TERM_NON_REG, 0);
     event.add_var_param(impu);
@@ -551,7 +597,7 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
                                             _icscf->get_scscf_selector(),
                                             trail(),
                                             _acr,
-                                            _icscf->port(),
+                                            _icscf->network_function_port(),
                                             impu,
                                             _originating);
 
@@ -630,7 +676,22 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
                                  req->line.req.uri) != PJ_SUCCESS)
           {
             // The URI has changed, so make sure we do a LIR lookup on it.
-            impu = PJUtils::public_id_from_uri(req->line.req.uri);
+            pj_bool_t status =
+                     PJUtils::valid_public_id_from_uri(req->line.req.uri, impu);
+
+            if (!status)
+            {
+              // We're unable to get the IMPU from the message - reject it now
+              SAS::Event event(trail(), SASEvent::ICSCF_INVALID_IMPU, 3);
+              event.add_var_param(PJUtils::uri_to_string(PJSIP_URI_IN_REQ_URI, req->line.req.uri));
+              SAS::report_event(event);
+
+              pjsip_msg* rsp = create_response(req, PJSIP_SC_BAD_REQUEST);
+              send_response(rsp);
+              free_msg(req);
+              return;
+            }
+
             ((ICSCFLIRouter *)_router)->change_impu(impu);
           }
 
@@ -693,6 +754,11 @@ void ICSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
     }
 
     PJUtils::add_route_header(req, scscf_sip_uri, get_pool(req));
+
+    // We might be invoking a directly attached AS here, so we should log the
+    // ICID if it exists
+    PJUtils::mark_icid(trail(), req);
+
     send_request(req);
   }
   else if ((uri_class == OFFNET_SIP_URI) ||

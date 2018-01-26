@@ -84,7 +84,7 @@ protected:
     virtual void process_tsx_request(pjsip_rx_data* rdata);
 
     /// Handle a received CANCEL request.
-    virtual void process_cancel_request(pjsip_rx_data* rdata);
+    virtual void process_cancel_request(pjsip_rx_data* rdata, const std::string& reason);
 
     /// Handles a response to an associated UACTsx.
     virtual void on_new_client_response(UACTsx* uac_tsx,
@@ -92,7 +92,8 @@ protected:
 
     /// Notification that an client transaction is not responding.
     virtual void on_client_not_responding(UACTsx* uac_tsx,
-                                          ForkErrorState fork_error);
+                                          ForkErrorState fork_error,
+                                          const std::string& reason);
 
     /// Notification that a response is being transmitted on this transaction.
     virtual void on_tx_response(pjsip_tx_data* tdata);
@@ -107,7 +108,9 @@ protected:
     virtual void on_tsx_state(pjsip_event* event);
 
     /// Cancels all pending UAC transactions associated with this UAS transaction.
-    virtual void cancel_pending_uac_tsx(int st_code, bool dissociate_uac);
+    virtual void cancel_pending_uac_tsx(int st_code,
+                                        const std::string& reason,
+                                        bool dissociate_uac);
 
     /// Enters this transaction's context.  While in the transaction's
     /// context, it will not be destroyed.  Whenever enter_context is called,
@@ -255,7 +258,7 @@ protected:
 
     /// Cancels the pending transaction, using the specified status code in the
     /// Reason header.
-    virtual void cancel_pending_tsx(int st_code);
+    virtual void cancel_pending_tsx(int st_code, const std::string& reason);
 
     /// Attempts a retry of the request.
     virtual bool retry_request();
@@ -280,6 +283,52 @@ protected:
                               struct pj_timer_entry *entry);
 
   protected:
+    /// Helper class to make sure that targets are blacklisted or whitelisted,
+    /// even in the event the calling code does not make a definitive decision.
+    class Target
+    {
+    public:
+      Target();
+      ~Target();
+
+      /// Tell the Target about an address and whether it represents a stateless
+      /// proxy.
+      /// @param addr - The address in question.
+      /// @param blacklist_by_default
+      ///             - Whether to blacklist the address when we have finished
+      ///               with it (if the state of the address is not known).
+      void set(AddrInfo& addr, bool blacklist_by_default);
+
+      /// Helper method to check if the Target had been initialized with an
+      /// address.
+      /// @param - Whether the Target has an address.
+      bool is_set();
+
+      /// Helper method to access the address of the target.
+      /// @return - A reference to the address.
+      const AddrInfo& address();
+
+      /// Mark this target as having definitively failed.
+      void failed();
+
+      /// Mark this target as having definitively succeeded.
+      void succeeded();
+
+    protected:
+      AddrInfo _addr;
+      bool _is_set;
+      bool _health_known;
+      bool _blacklist_by_default;
+
+      // This class is not copyable or moveable. If it were, the semantics of
+      Target(const Target& rhs) = delete;
+      Target(Target&& rhs) = delete;
+
+      // Unset the address in the target. If the address has not already been
+      // blacklisted or whitelisted, this method will do that.
+      void unset();
+    };
+
     /// Returns the SAS trail identifier attached to the transaction.
     SAS::TrailId trail() const { return _trail; }
 
@@ -291,6 +340,11 @@ protected:
 
     /// Called when timer C expires.
     void timer_c_expired();
+
+    /// Called to get the next server to try, which is stored in
+    /// _current_server. Returns false if there are no servers or left, or if
+    /// the maximum number of attempts has been attempted.
+    bool get_next_server();
 
     /// Owning proxy object.
     BasicProxy* _proxy;
@@ -315,9 +369,11 @@ protected:
     /// after it has been passed to PJSIP for sending.
     pjsip_tx_data* _tdata;
 
-    /// The resolved server addresses for this transaction.
-    std::vector<AddrInfo> _servers;
-    int _current_server;
+    /// Iterator to the list of available servers.
+    BaseAddrIterator* _servers_iter;
+
+    /// Current server target.
+    Target _current_server;
 
     /// Pointer to the associated PJSIP UAC transaction used to send a
     /// CANCEL request.  NULL if no CANCEL has been sent.
@@ -335,6 +391,9 @@ protected:
 
     // Whether this UAC transaction is to a stateless proxy.
     bool _stateless_proxy;
+
+    // Tracks how many attempts the UACTsx has left to try the request.
+    int _num_attempts_left;
 
     friend class UASTsx;
 

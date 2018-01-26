@@ -1,4 +1,4 @@
-/**
+  /**
  * @file impistore.cpp Implementation of store for IMPI data
  *
  * Copyright (C) Metaswitch Networks 2017
@@ -31,9 +31,9 @@ rapidjson::Document* ImpiStore::json_from_string(const std::string& string)
   json->Parse<0>(string.c_str());
   if (json->HasParseError())
   {
-    TRC_INFO("Failed to parse JSON: %s\nError: %s",
-             string.c_str(),
-             rapidjson::GetParseError_En(json->GetParseError()));
+    TRC_INFO("Failed to parse JSON.  Error: %s\n%s",
+             rapidjson::GetParseError_En(json->GetParseError()),
+             string.c_str());
     delete json;
     json = NULL;
   }
@@ -296,12 +296,14 @@ void correlate_trail_to_challenge(ImpiStore::AuthChallenge* auth_challenge,
   // Report the correlator as a SAS marker, if it exists.
   if (auth_challenge->get_correlator() != "")
   {
-    SAS::Marker via_marker(trail, MARKER_ID_VIA_BRANCH_PARAM, 1u);
-    via_marker.add_var_param(auth_challenge->get_correlator());
-    SAS::report_marker(via_marker, SAS::Marker::Scope::Trace);
+    SAS::Marker marker(trail, MARKED_ID_GENERIC_CORRELATOR, 3u);
+    marker.add_static_param((uint32_t)UniquenessScopes::DIGEST_OPAQUE);
+    marker.add_var_param(auth_challenge->get_correlator());
+    SAS::report_marker(marker, SAS::Marker::Scope::Trace);
   }
   else
   {
-    TRC_WARNING("Could not raise branch correlation marker because correlator is unknown");
+    // This should never happen -- we always set a correlator.
+    TRC_WARNING("Could not raise correlation marker because correlator is unknown");
   }
 }

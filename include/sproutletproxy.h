@@ -18,6 +18,7 @@
 #include <list>
 
 #include "basicproxy.h"
+#include "pjutils.h"
 #include "sproutlet.h"
 #include "snmp_sip_request_types.h"
 #include "sproutlet_options.h"
@@ -109,20 +110,12 @@ protected:
   Sproutlet* service_from_params(pjsip_sip_uri* uri);
 
   bool is_uri_local(const pjsip_uri* uri);
-  pjsip_sip_uri* get_routing_uri(const pjsip_msg* req) const;
+  pjsip_sip_uri* get_routing_uri(const pjsip_msg* req,
+                                 const Sproutlet* sproutlet) const;
   std::string get_local_hostname(const pjsip_sip_uri* uri) const;
   bool is_host_local(const pj_str_t* host) const;
   bool is_uri_reflexive(const pjsip_uri* uri,
-                        Sproutlet* sproutlet,
-                        SAS::TrailId trail);
-
-  /// Defintion of a timer set by an child sproutlet transaction.
-  struct SproutletTimerCallbackData
-  {
-    SproutletProxy::UASTsx* uas_tsx;
-    SproutletWrapper* sproutlet_wrapper;
-    void* context;
-  };
+                        const Sproutlet* sproutlet) const;
 
   // A struct to wrap tx_data and allowed_host_state in a convenient bundle
   // to pass over interfaces when sending a request.
@@ -152,24 +145,62 @@ protected:
     virtual void process_tsx_request(pjsip_rx_data* rdata);
 
     /// Handle a received CANCEL request.
-    virtual void process_cancel_request(pjsip_rx_data* rdata);
+    virtual void process_cancel_request(pjsip_rx_data* rdata, const std::string& reason);
 
     /// Handle a timer pop.
     static void on_timer_pop(pj_timer_heap_t* th, pj_timer_entry* tentry);
 
   protected:
+
+    // A Callback object to be run on a worker thread
+    class Callback : public PJUtils::Callback
+    {
+    public:
+      Callback(UASTsx* tsx, std::function<void()> run_fn);
+      virtual void run() override;
+
+    private:
+      // The UASTsx whose context should be entered before running _run_fn
+      UASTsx* _tsx;
+
+      // The function to run inside the UASTsx's context
+      std::function<void()> _run_fn;
+    };
+
     /// Handles a response to an associated UACTsx.
     virtual void on_new_client_response(UACTsx* uac_tsx,
                                         pjsip_tx_data *tdata);
 
     /// Notification that an client transaction is not responding.
     virtual void on_client_not_responding(UACTsx* uac_tsx,
-                                          ForkErrorState fork_error);
+                                          ForkErrorState fork_error,
+                                          const std::string& reason);
 
     virtual void on_tsx_state(pjsip_event* event);
 
+    // A count of the number of pending Callbacks that are queued for this
+    // UASTsx. A non-zero count prevents the UASTsx from being destroyed
+    int _pending_callbacks = 0;
 
   private:
+    /// Defintion of a timer set by a sproutlet transaction.
+    struct TimerCallbackData
+    {
+      UASTsx* uas_tsx;
+      SproutletWrapper* sproutlet_wrapper;
+      void* context;
+    };
+
+    // The timer callback object, which is run on a worker thread
+    class TimerCallback : public PJUtils::Callback
+    {
+      pj_timer_entry* _timer_entry;
+
+    public:
+      TimerCallback(pj_timer_entry* timer);
+      void run() override;
+    };
+
     void tx_request(SproutletWrapper* sproutlet,
                     int fork_id,
                     SendRequest req);
@@ -186,7 +217,9 @@ protected:
 
     void tx_cancel(SproutletWrapper* sproutlet,
                    int fork_id,
-                   pjsip_tx_data* cancel);
+                   pjsip_tx_data* cancel,
+                   int st_code,
+                   const std::string& reason);
 
     /// Checks to see if it is safe to destroy the UASTsx.
     void check_destroy();
@@ -245,6 +278,10 @@ protected:
     /// The UASTsx will persist while there are pending timers.
     std::set<pj_timer_entry*> _pending_timers;
 
+    /// Count of the number of UASTsx objects currently active. Used for
+    /// debugging purposes.
+    static std::atomic_int _num_instances;
+
     friend class SproutletWrapper;
   };
 
@@ -271,6 +308,8 @@ protected:
 class SproutletWrapper : public SproutletTsxHelper
 {
 public:
+  static constexpr const char* EXTERNAL_NETWORK_FUNCTION = "EXTERNAL";
+
   /// Constructor
   SproutletWrapper(SproutletProxy* proxy,
                    SproutletProxy::UASTsx* proxy_tsx,
@@ -305,8 +344,9 @@ public:
                              const std::string& status_text="");
   int send_request(pjsip_msg*& req, int allowed_host_state);
   void send_response(pjsip_msg*& rsp);
-  void cancel_fork(int fork_id, int reason=0);
-  void cancel_pending_forks(int reason=0);
+  void cancel_fork(int fork_id, int st_code = 0, std::string reason = "");
+  void cancel_pending_forks(int st_code = 0, std::string reason = "");
+  void mark_pending_forks_as_abandoned();
   const ForkState& fork_state(int fork_id);
   void free_msg(pjsip_msg*& msg);
   pj_pool_t* get_pool(const pjsip_msg* msg);
@@ -322,14 +362,18 @@ public:
                               pj_pool_t* pool) const;
   std::string get_local_hostname(const pjsip_sip_uri* uri) const;
   bool is_network_func_boundary() const;
+  bool is_internal_network_func_boundary() const;
   int get_depth() const { return _depth; };
   const std::string& get_network_function() const { return _this_network_func; };
 
 private:
-  void rx_request(pjsip_tx_data* req);
-  void rx_response(pjsip_tx_data* rsp, int fork_id);
-  void rx_cancel(pjsip_tx_data* cancel);
-  void rx_error(int status_code);
+  void rx_request(pjsip_tx_data* req,
+                  int allowed_host_state=BaseResolver::ALL_LISTS);
+  void rx_response(pjsip_tx_data* rsp,
+                   int fork_id,
+                   ForkErrorState error_state=ForkErrorState::NONE);
+  void rx_cancel(pjsip_tx_data* cancel, const std::string& reason);
+  void rx_error(int status_code, const std::string& reason);
   void rx_fork_error(ForkErrorState fork_error, int fork_id);
   void on_timer_pop(TimerID id, void* context);
   void register_tdata(pjsip_tx_data* tdata);
@@ -337,12 +381,15 @@ private:
 
   void process_actions(bool complete_after_actions);
   void aggregate_response(pjsip_tx_data* rsp);
+  int count_pending_responses();
+  int count_pending_actionable_responses();
   void tx_request(SproutletProxy::SendRequest req, int fork_id);
   void tx_response(pjsip_tx_data* rsp);
   void tx_cancel(int fork_id);
   int compare_sip_sc(int sc1, int sc2);
   bool is_uri_local(const pjsip_uri*) const;
   void log_inter_sproutlet(pjsip_tx_data* tdata, bool downstream);
+  ForkErrorState get_error_state() const;
 
   SproutletProxy* _proxy;
 
@@ -390,7 +437,6 @@ private:
   Responses _send_responses;
 
   int _pending_sends;
-  int _pending_responses;
   pjsip_tx_data* _best_rsp;
 
   bool _complete;
@@ -411,7 +457,10 @@ private:
     ForkState state;
     pjsip_tx_data* req;
     bool pending_cancel;
-    int cancel_reason;
+    int cancel_st_code;
+    std::string cancel_reason;
+    bool pending_response;
+    bool abandoned;
   } ForkStatus;
   std::vector<ForkStatus> _forks;
 
@@ -419,6 +468,12 @@ private:
   /// SproutletWrapper (and the SproutletTsx it wraps) won't be deleted
   /// until all these timers have popped or been cancelled.
   std::set<TimerID> _pending_timers;
+
+  // The allowed host state for outbound requests from the sproutlet wrapped by
+  // this wrapper.  If there are no addresses of the appropriate state (e.g.
+  // whitelisted), then a 503 response will be internally generated, and the
+  // error state will be set to indicate that there were no matching addresses.
+  int _allowed_host_state;
 
   SAS::TrailId _trail_id;
 

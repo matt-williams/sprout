@@ -51,6 +51,7 @@ struct stack_data_struct
   pj_str_t             default_home_domain;
   std::unordered_set<std::string> home_domains;
   std::unordered_set<std::string> aliases;
+  std::string          sprout_hostname;
   pj_str_t             cdf_domain;
   pj_str_t             scscf_uri_str;
   pjsip_sip_uri*       scscf_uri;
@@ -72,6 +73,7 @@ struct stack_data_struct
   int max_session_expires;
   int sip_tcp_connect_timeout;
   int sip_tcp_send_timeout;
+  bool enable_orig_sip_to_tel_coerce;
 };
 
 extern struct stack_data_struct stack_data;
@@ -152,7 +154,8 @@ extern pj_status_t init_stack(const std::string& sas_system_name,
                               const int sip_tcp_send_timeout,
                               QuiescingManager *quiescing_mgr,
                               const std::string& cdf_domain,
-                              std::vector<std::string> sproutlet_uris);
+                              std::vector<std::string> sproutlet_uris,
+                              bool enable_orig_sip_to_tel_coerce);
 extern pj_status_t start_pjsip_thread();
 extern pj_status_t stop_pjsip_thread();
 extern void stop_stack();

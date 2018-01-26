@@ -18,6 +18,9 @@ extern "C" {
 
 #include <arpa/inet.h>
 
+#include <pthread.h>
+#include <sched.h>
+
 // Common STL includes.
 #include <cassert>
 #include <vector>
@@ -26,6 +29,10 @@ extern "C" {
 #include <list>
 #include <queue>
 #include <string>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/resource.h>
 
 #include "constants.h"
 #include "eventq.h"
@@ -107,6 +114,9 @@ const static std::string _known_statnames[] = {
   "cdiv_not_registered",
   "cdiv_no_answer",
   "cdiv_not_reachable",
+  // The following stats are used by memento-as. Since memento has not yet been
+  // updated to use SNMP stats, we must declare the statistics here. All new
+  // sproutlets should use SNMP stats, so this is a problem unique to memento.
   "memento_completed_calls",
   "memento_failed_calls",
   "memento_not_recorded_overload",
@@ -132,6 +142,16 @@ extern void set_quiescing_false()
   quiescing = PJ_FALSE;
 }
 
+static void on_io_started(const std::string& msg)
+{
+  TRC_WARNING("Performing blocking work on PJSIP transport thread: %s", msg.c_str());
+
+  if (Log::enabled(Log::DEBUG_LEVEL))
+  {
+    TRC_BACKTRACE("Call stack for blocking work follows");
+  }
+}
+
 /// PJSIP threads are donated to PJSIP to handle receiving at transport level
 /// and timers.
 static int pjsip_thread_func(void *p)
@@ -140,17 +160,41 @@ static int pjsip_thread_func(void *p)
 
   PJ_UNUSED_ARG(p);
 
-  TRC_STATUS("PJSIP thread started");
+  // Get the Kernel's ID for this thread so we can log it out.
+  pid_t tid;
+  tid = syscall(SYS_gettid);
+
+  TRC_STATUS("PJSIP transport thread started with kernel thread ID %d", tid);
+
+  // Increase the priority of the transport thread (by giving it a real-time
+  // scheduling policy and a non-zero priority). This means that the transport
+  // thread is scheduled more aggressively than the worker threads which means
+  // that messages are read from the network promptly, but then rejected due to
+  // unavailability of the worker threads.
+  pthread_t this_thread = pthread_self();
+
+  struct sched_param params;
+  params.sched_priority = sched_get_priority_min(SCHED_FIFO);
+
+  if (pthread_setschedparam(this_thread, SCHED_FIFO, &params) != 0)
+  {
+    TRC_WARNING("Unable to set SCHED_FIFO scheduling policy on the transport thread. "
+                "Overload may not be handled gracefully");
+  }
 
   pj_bool_t curr_quiescing = PJ_FALSE;
-  pj_bool_t new_quiescing = quiescing;
+
+  // Log whenever we do any I/O on this thread. There is only one transport
+  // thread so blocking on it is a really bad idea!
+  Utils::IOHook io_hook(&on_io_started,
+                        Utils::IOHook::NOOP_ON_COMPLETE);
 
   while (!quit_flag)
   {
     pjsip_endpt_handle_events(stack_data.endpt, &delay);
 
     // Check if our quiescing state has changed, and act appropriately
-    new_quiescing = quiescing;
+    pj_bool_t new_quiescing = quiescing;
     if (curr_quiescing != new_quiescing)
     {
       TRC_STATUS("Quiescing state changed");
@@ -188,7 +232,12 @@ static void pjsip_log_handler(int level,
   default: level = 5; break;
   }
 
-  Log::write(level, "pjsip", 0, data);
+  // Pass the data string as a parameter, with a format of "%s", to the standard
+  // common log write routine.
+  // Note that we mustn't pass data as the format string (with no parameters),
+  // because it may contain % characters which we don't want to be accidentally
+  // interpreted as format specifiers.
+  Log::write(level, "pjsip", 0, "%s", data);
 }
 
 
@@ -511,6 +560,17 @@ pj_status_t init_pjsip()
   status = pjsip_endpt_create(&stack_data.cp.factory, NULL, &stack_data.endpt);
   PJ_ASSERT_RETURN(status == PJ_SUCCESS, status);
 
+  // Increase the limit on the number of timers that PJSIP processes each time
+  // it polls the timer heap.
+  //
+  // By default PJSIP will process up to 64 timers and 16 epoll events per call
+  // to pjsip_endpt_handle_events. This ratio means that if inbound messages
+  // spawn more than a handlful of timers we can set timers faster than they can
+  // be expired.
+  pj_timer_heap_set_max_timed_out_per_poll(
+                                   pjsip_endpt_get_timer_heap(stack_data.endpt),
+                                   4096);
+
   // Init transaction layer.
   status = pjsip_tsx_layer_init_module(stack_data.endpt);
   PJ_ASSERT_RETURN(status == PJ_SUCCESS, status);
@@ -567,7 +627,8 @@ pj_status_t init_stack(const std::string& system_name,
                        const int sip_tcp_send_timeout,
                        QuiescingManager *quiescing_mgr_arg,
                        const std::string& cdf_domain,
-                       std::vector<std::string> sproutlet_uris)
+                       std::vector<std::string> sproutlet_uris,
+                       bool enable_orig_sip_to_tel_coerce)
 {
   pj_status_t status;
   pj_sockaddr pri_addr;
@@ -597,6 +658,7 @@ pj_status_t init_stack(const std::string& system_name,
   stack_data.max_session_expires = max_session_expires;
   stack_data.sip_tcp_connect_timeout = sip_tcp_connect_timeout;
   stack_data.sip_tcp_send_timeout = sip_tcp_send_timeout;
+  stack_data.enable_orig_sip_to_tel_coerce = enable_orig_sip_to_tel_coerce;
 
   // Work out local and public hostnames and cluster domain names.
   stack_data.local_host = (local_host != "") ? pj_str(local_host_cstr) : *pj_gethostname();
@@ -608,6 +670,9 @@ pj_status_t init_stack(const std::string& system_name,
   // Need a version of the SCSCF URI in angle brackets for use as contact header.
   std::string contact_str = "<"+scscf_uri+">";
   stack_data.scscf_contact = pj_str(strdup(contact_str.c_str()));
+
+  // Sprout hostname
+  stack_data.sprout_hostname = sprout_hostname;
 
   // Build a set of home domains
   stack_data.home_domains = std::unordered_set<std::string>();

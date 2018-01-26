@@ -27,7 +27,6 @@
 #include "impistore.h"
 #include "analyticslogger.h"
 #include "fifcservice.h"
-#include "mmfservice.h"
 
 // Struct containing the possible values for non-REGISTER authentication. These
 // are a set of flags that indicate different conditions that may cause a
@@ -95,9 +94,6 @@ struct options
   int                                  http_threads;
   std::string                          billing_cdf;
   bool                                 emerg_reg_accepted;
-  int                                  max_call_list_length;
-  int                                  memento_threads;
-  int                                  call_list_ttl;
   int                                  worker_threads;
   bool                                 log_to_file;
   std::string                          log_directory;
@@ -108,6 +104,7 @@ struct options
   int                                  max_tokens;
   float                                init_token_rate;
   float                                min_token_rate;
+  float                                max_token_rate;
   int                                  cass_target_latency_us;
   int                                  exception_max_ttl;
   int                                  sip_blacklist_duration;
@@ -124,7 +121,6 @@ struct options
   std::string                          pbx_service_route;
   uint32_t                             non_register_auth_mode;
   bool                                 force_third_party_register_body;
-  std::string                          memento_notify_url;
   std::string                          pidfile;
   std::map<std::string, std::multimap<std::string, std::string>>
                                        plugin_options;
@@ -142,6 +138,9 @@ struct options
   std::string                          dummy_app_server;
   bool                                 http_acr_logging;
   int                                  homestead_timeout;
+  int                                  request_on_queue_timeout;
+  std::set<std::string>                blacklisted_scscfs;
+  bool                                 enable_orig_sip_to_tel_coerce;
   std::string                          rina_local_appl;
   std::string                          rina_remote_appl;
 };
@@ -168,6 +167,5 @@ extern AlarmManager* alarm_manager;
 extern AnalyticsLogger* analytics_logger;
 extern ChronosConnection* chronos_connection;
 extern FIFCService* fifc_service;
-extern MMFService* mmf_service;
 
 #endif

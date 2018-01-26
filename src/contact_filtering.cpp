@@ -239,20 +239,12 @@ bool binding_to_target(const std::string& aor,
     // we use that, otherwise we use the _path_uris field.
     if (!binding._path_headers.empty())
     {
-      for (std::list<std::string>::const_iterator path = binding._path_headers.begin();
-           path != binding._path_headers.end();
-           ++path)
+      for (std::string path : binding._path_headers)
       {
-        // We need a char* not a const char* so using c_str() isn't enough and
-        // we need to cpoy the string across.
-        std::string const_path_str = (*path).c_str();
-        char* path_str = new char[const_path_str.length() + 1];
-        std::strcpy(path_str, const_path_str.c_str());
-
         pjsip_route_hdr* path_hdr = (pjsip_route_hdr*)pjsip_parse_hdr(pool,
                                                                       &STR_ROUTE,
-                                                                      path_str,
-                                                                      strlen(path_str),
+                                                                      (char*)path.c_str(),
+                                                                      strlen(path.c_str()),
                                                                       NULL);
         if (path_hdr != NULL)
         {
@@ -261,15 +253,13 @@ bool binding_to_target(const std::string& aor,
           // deleting path_str.
           pjsip_route_hdr* path_hdr_clone = (pjsip_route_hdr*)pjsip_hdr_clone(pool, path_hdr);
           target.paths.push_back(path_hdr_clone);
-          delete[] path_str;
         }
         else
         {
           TRC_WARNING("Ignoring contact %s for target %s because of badly formed path header %s",
-                      binding._uri.c_str(), aor.c_str(), (*path).c_str());
+                      binding._uri.c_str(), aor.c_str(), path.c_str());
           // TODO SAS log
           valid = false;
-          delete[] path_str;
           break;
         }
       }
@@ -614,10 +604,10 @@ MatchResult match_numeric(const std::string& matcher,
 }
 
 // Only needed for passing in to "transform" below.
-std::string string_to_lowercase(std::string& str)
+std::string string_to_lowercase_and_trim(std::string& str)
 {
   ::boost::algorithm::to_lower(str);
-  return str;
+  return Utils::trim(str);
 }
 
 MatchResult match_tokens(const std::string& matcher,
@@ -629,11 +619,11 @@ MatchResult match_tokens(const std::string& matcher,
   std::vector<std::string> matchee_tokens;
   Utils::split_string(matchee, ',', matchee_tokens, 0, true);
 
-  // Lower-case everything so we can safely compare.
+  // Lower-case everything and strip whitespace so we can safely compare.
   std::transform(matcher_tokens.begin(), matcher_tokens.end(),
-                 matcher_tokens.begin(), string_to_lowercase);
+                 matcher_tokens.begin(), string_to_lowercase_and_trim);
   std::transform(matchee_tokens.begin(), matchee_tokens.end(),
-                 matchee_tokens.begin(), string_to_lowercase);
+                 matchee_tokens.begin(), string_to_lowercase_and_trim);
 
   // Loop over both sets of tokens, to see whether a feature
   // collection (i.e. a single token) could satisfy both predicates.

@@ -27,10 +27,16 @@
 #include "fakesnmp.hpp"
 #include "rapidxml/rapidxml.hpp"
 #include "mock_hss_connection.h"
+#include "hssconnection.h"
 
 using ::testing::MatchesRegex;
 using ::testing::_;
 using ::testing::Return;
+using ::testing::SaveArg;
+using ::testing::InSequence;
+using ::testing::SetArgReferee;
+using ::testing::HasSubstr;
+using ::testing::An;
 
 class Message
 {
@@ -75,6 +81,11 @@ public:
   }
 
   string get();
+
+  void inc_cseq()
+  {
+    _cseq = std::to_string(std::stoi(_cseq) + 1);
+  }
 };
 
 string Message::get()
@@ -96,7 +107,7 @@ string Message::get()
     EXPECT_LT(n, (int)sizeof(buf));
   }
 
-  std::string branch = _branch.empty() ? "Pjmo1aimuq33BAI4rjhgQgBr4sY" + std::to_string(_unique) : _branch;
+  std::string branch = _branch.empty() ? "Pjmo1aimuq33BAI4rjhgQgBr4sY" + std::to_string(_unique) + _cseq : _branch;
   std::string route = _route.empty() ? "" : "Route: <sip:" + _route + ";transport=tcp;lr;service=registrar>\r\n";
 
   n = snprintf(buf, sizeof(buf),
@@ -193,8 +204,6 @@ public:
   {
     hss_connection()->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "");
     hss_connection()->set_impu_result("tel:6505550231", "reg", RegDataXMLUtils::STATE_REGISTERED, "");
-    hss_connection()->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "");
-    hss_connection()->set_impu_result("sip:6505550231@homedomain", "", RegDataXMLUtils::STATE_REGISTERED, "");
     hss_connection()->set_rc("/impu/sip%3A6505550231%40homedomain/reg-data", HTTP_OK);
     _chronos_connection->set_result("", HTTP_OK);
     _chronos_connection->set_result("post_identity", HTTP_OK);
@@ -298,7 +307,8 @@ public:
   void check_notify(pjsip_msg* out,
                     std::string expected_aor,
                     std::string reg_state,
-                    std::pair<std::string, std::string> contact_values)
+                    std::pair<std::string, std::string> contact_values,
+                    int check_contact = 0)
   {
     char buf[16384];
     int n = out->body->print_body(out->body, buf, sizeof(buf));
@@ -323,7 +333,13 @@ public:
     ASSERT_TRUE(reg_info);
     rapidxml::xml_node<> *registration = reg_info->first_node("registration");
     ASSERT_TRUE(registration);
-    rapidxml::xml_node<> *contact = registration->first_node("contact");
+    rapidxml::xml_node<> *contact;
+    contact = registration->first_node("contact");
+    for (int ii = 0; ii < check_contact; ii++)
+    {
+      contact = contact->next_sibling();
+    }
+
     ASSERT_TRUE(contact);
 
     ASSERT_EQ(expected_aor, std::string(registration->first_attribute("aor")->value()));
@@ -405,12 +421,21 @@ private:
   {
     // First registration OK.
     Message msg;
+    HSSConnection::irs_query irs_query;
 
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(DoAll(SaveArg<0>(&irs_query),
+                      Return(HTTP_OK)));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     pjsip_msg* out = current_txdata()->msg;
+
+    ASSERT_EQ(irs_query._public_id, "sip:6505550231@homedomain");
+    //TODO:ASSERT_EQ(irs_query._req_type, HSSConnection::REG);
+
     EXPECT_EQ(200, out->line.status.code);
     EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_attempts);
     EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_successes);
@@ -422,8 +447,12 @@ private:
     msg._contact = "sip:eeeebbbbaaaa11119c661a7acf228ed7@10.114.61.111:5061;transport=tcp;ob";
     msg._contact_instance = ";+sip.instance=\"<urn:uuid:00000000-0000-0000-0000-a55444444440>\"";
     msg._path = "Path: <sip:XxxxxxxXXXXXXAW4z38AABcUwStNKgAAa3WOL+1v72nFJg==@ec2-107-22-156-119.compute-1.amazonaws.com:5060;lr;ob>";
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -447,8 +476,11 @@ private:
     // Reregistration of first binding is OK but doesn't add a new one.
     msg0._unique += 1;
     msg = msg0;
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -470,8 +502,11 @@ private:
     msg0._unique += 1;
     msg = msg0;
     msg._contact_instance = "";
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -493,8 +528,11 @@ private:
 
     // Reregistering that yields no change.
     msg._unique += 1;
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -517,8 +555,11 @@ private:
     string save_contact = msg._contact;
     msg._unique += 1;
     msg._contact = "";
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -541,8 +582,11 @@ private:
     // Reregistering again with an updated cseq triggers an update of the binding.
     msg._unique += 1;
     msg._cseq = "16568";
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -567,8 +611,11 @@ private:
     msg._contact = "*";
     msg._contact_instance = "";
     msg._contact_params = "";
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
+
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK));
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
     out = current_txdata()->msg;
@@ -585,12 +632,17 @@ private:
     msg._contact = "*";
     msg._contact_instance = "";
     msg._contact_params = "";
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::REG, _, _, _, _, _, _, _)).WillOnce(Return(HTTP_OK));
-    EXPECT_CALL(*_hss_connection_observer,
-                update_registration_state("sip:6505550231@homedomain", _, HSSConnection::DEREG_USER, _, _)).WillOnce(Return(HTTP_OK));
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillOnce(Return(HTTP_OK))
+      .WillOnce(DoAll(SaveArg<0>(&irs_query),
+                      Return(HTTP_OK)));
+
+    hss_connection()->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "");
+    hss_connection()->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "");
+
     inject_msg(msg.get());
     ASSERT_EQ(1, txdata_count());
+    ASSERT_EQ(irs_query._req_type, HSSConnection::DEREG_USER);
     out = current_txdata()->msg;
     EXPECT_EQ(200, out->line.status.code);
     EXPECT_EQ("OK", str_pj(out->line.status.reason));
@@ -777,7 +829,7 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeader)
 {
   // We have a private ID in this test, so set up the expect response
   // to the query.
-  _hss_connection->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
 
   Message msg;
   msg._expires = "Expires: 300";
@@ -801,7 +853,8 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeader)
   free_txdata();
 
   // Fetch this binding by sending in the same request with no Contact header
-  _hss_connection->set_impu_result("sip:6505550231@homedomain", "", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  msg.inc_cseq(); // This also updates the branch parameter
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
 
   msg._contact = "";
   inject_msg(msg.get());
@@ -821,12 +874,12 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeader)
   free_txdata();
 }
 
-// Check that something sensible happens if there is not route header on the request.
+// Check that something sensible happens if there is no route header on the request.
 TEST_F(RegistrarTest, SimpleMainlineAuthHeaderNoRoute)
 {
   // We have a private ID in this test, so set up the expect response
   // to the query.
-  _hss_connection->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
 
   Message msg;
   msg._route = "";
@@ -845,13 +898,14 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeaderNoRoute)
   EXPECT_EQ("Require: outbound", get_headers(out, "Require")); // because we have path
   EXPECT_EQ(msg._path, get_headers(out, "Path"));
   EXPECT_EQ("P-Associated-URI: <sip:6505550231@homedomain>", get_headers(out, "P-Associated-URI"));
-  EXPECT_EQ("Service-Route: <sip:scscf.homedomain:5058;transport=TCP;lr;orig>", get_headers(out, "Service-Route"));
+  EXPECT_EQ("Service-Route: <sip:scscf.sprout.homedomain:5058;transport=TCP;lr;orig>", get_headers(out, "Service-Route"));
   EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_attempts);
   EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_successes);
   free_txdata();
 
   // Fetch this binding by sending in the same request with no Contact header
-  _hss_connection->set_impu_result("sip:6505550231@homedomain", "", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  msg.inc_cseq(); // This also updates the branch parameter
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
 
   msg._contact = "";
   inject_msg(msg.get());
@@ -865,7 +919,7 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeaderNoRoute)
   EXPECT_EQ("Require: outbound", get_headers(out, "Require")); // because we have path
   EXPECT_EQ(msg._path, get_headers(out, "Path"));
   EXPECT_EQ("P-Associated-URI: <sip:6505550231@homedomain>", get_headers(out, "P-Associated-URI"));
-  EXPECT_EQ("Service-Route: <sip:scscf.homedomain:5058;transport=TCP;lr;orig>", get_headers(out, "Service-Route"));
+  EXPECT_EQ("Service-Route: <sip:scscf.sprout.homedomain:5058;transport=TCP;lr;orig>", get_headers(out, "Service-Route"));
   EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_attempts);
   EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_successes);
   free_txdata();
@@ -876,7 +930,7 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeaderWithTelURI)
 {
   // We have a private ID in this test, so set up the expect response
   // to the query.
-  _hss_connection->set_impu_result("tel:6505550231", "reg", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  _hss_connection->set_impu_result_with_prev("tel:6505550231", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
   Message msg;
   msg._expires = "Expires: 300";
   msg._auth = "Authorization: Digest username=\"Alice\", realm=\"atlanta.com\", nonce=\"84a4cc6f3082121f32b42a2187831a9e\", response=\"7587245234b3434cc3412213e5f113a5432\"";
@@ -906,7 +960,7 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeaderRemoteSite)
 {
   // We have a private ID in this test, so set up the expect response
   // to the query.
-  _hss_connection->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
 
   Message msg;
   msg._expires = "Expires: 300";
@@ -929,6 +983,8 @@ TEST_F(RegistrarTest, SimpleMainlineAuthHeaderRemoteSite)
 /// Simple correct example with Expires header
 TEST_F(RegistrarTest, SimpleMainlineExpiresHeader)
 {
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
+
   Message msg;
   msg._expires = "Expires: 300";
   msg._contact_params = ";+sip.ice;reg-id=1";
@@ -953,6 +1009,17 @@ TEST_F(RegistrarTest, SimpleMainlineExpiresHeader)
 /// appropriate headers are passed through
 TEST_F(RegistrarTest, SimpleMainlinePassthrough)
 {
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
+  // Set some interesting Charging Function values
+  _hss_connection->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "", "", "",
+    "<ChargingAddresses>\n"
+    "  <CCF priority=\"1\">token%</CCF>\n"
+    "  <CCF priority=\"2\">aaa://example.host;transport=TCP</CCF>\n"
+    "  <ECF priority=\"1\">\"aaa://example.host;transport=UDP\"</ECF>\n"
+    "  <ECF priority=\"2\">[fd2c:de55:7690:7777::ac12:aa6]</ECF>\n"
+    "  <ECF priority=\"3\">&quot;aaa://another.example.host;transport=TCP&quot;</ECF>\n"
+    "</ChargingAddresses>"
+  );
   Message msg;
   msg._expires = "Expires: 300";
   msg._contact_params = ";+sip.ice;reg-id=1";
@@ -962,7 +1029,9 @@ TEST_F(RegistrarTest, SimpleMainlinePassthrough)
   EXPECT_EQ(200, out->line.status.code);
   EXPECT_EQ("OK", str_pj(out->line.status.reason));
   EXPECT_EQ("P-Charging-Vector: icid-value=\"100\"", get_headers(out, "P-Charging-Vector"));
-  EXPECT_EQ("P-Charging-Function-Addresses: ccf=ccf1;ecf=ecf1;ecf=ecf2", get_headers(out, "P-Charging-Function-Addresses"));
+  // Check the contents of the PCFA header.  Only the 2nd value above should be quoted, as the 1st and 4th values match
+  // the required spec for a "token" or IPv6 address, and the 3rd value was already quoted.
+  EXPECT_EQ("P-Charging-Function-Addresses: ccf=token%;ccf=\"aaa://example.host;transport=TCP\";ecf=\"aaa://example.host;transport=UDP\";ecf=[fd2c:de55:7690:7777::ac12:aa6];ecf=\"aaa://another.example.host;transport=TCP\"", get_headers(out, "P-Charging-Function-Addresses"));
   EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_attempts);
   EXPECT_EQ(1,((SNMP::FakeSuccessFailCountTable*)SNMP::FAKE_REGISTRATION_STATS_TABLES.init_reg_tbl)->_successes);
 
@@ -973,6 +1042,8 @@ TEST_F(RegistrarTest, SimpleMainlinePassthrough)
 /// Simple correct example with Expires parameter
 TEST_F(RegistrarTest, SimpleMainlineExpiresParameter)
 {
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
+
   Message msg;
   inject_msg(msg.get());
   ASSERT_EQ(1, txdata_count());
@@ -994,6 +1065,8 @@ TEST_F(RegistrarTest, SimpleMainlineExpiresParameter)
 /// Simple correct example with Expires parameter set to 0
 TEST_F(RegistrarTest, SimpleMainlineDeregister)
 {
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+
   Message msg;
   msg._contact_params = ";expires=0;+sip.ice;reg-id=1";
   inject_msg(msg.get());
@@ -1012,6 +1085,7 @@ TEST_F(RegistrarTest, SimpleMainlineDeregister)
 /// Simple correct example with no expiry header or parameter.
 TEST_F(RegistrarTest, SimpleMainlineNoExpiresHeaderParameter)
 {
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
   Message msg;
   msg._contact_params = ";+sip.ice;reg-id=1";
   inject_msg(msg.get());
@@ -1036,7 +1110,7 @@ TEST_F(RegistrarTest, GRUUNotSupported)
 {
   // We have a private ID in this test, so set up the expect response
   // to the query.
-  _hss_connection->set_impu_result("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_REGISTERED, "", "?private_id=Alice");
 
   Message msg;
   msg._expires = "Expires: 300";
@@ -1400,7 +1474,17 @@ TEST_F(RegistrarTest, AppServersPassthrough)
                               "      <DefaultHandling>0</DefaultHandling>\n"
                               "    </ApplicationServer>\n"
                               "  </InitialFilterCriteria>\n"
-                              "</ServiceProfile></IMSSubscription>");
+                              "</ServiceProfile></IMSSubscription>",
+                              "",
+                              "",
+                              // Set some more sample Charging Function names to exercise quoting logic
+                              "<ChargingAddresses>\n"
+                              "  <CCF priority=\"1\">4.3.2.1</CCF>\n"
+                              "  <CCF priority=\"2\">\\\"\\</CCF>\n"
+                              "  <ECF priority=\"1\">quote=this</CCF>\n"
+                              "  <ECF priority=\"2\">quote;this;as;well</CCF>\n"
+                              "</ChargingAddresses>"
+                          );
 
   TransportFlow tpAS(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
 
@@ -1420,7 +1504,8 @@ TEST_F(RegistrarTest, AppServersPassthrough)
 
   // Test the headers we expect to have passed through
   EXPECT_EQ("P-Charging-Vector: icid-value=\"100\"", get_headers(out, "P-Charging-Vector"));
-  EXPECT_EQ("P-Charging-Function-Addresses: ccf=ccf1;ecf=ecf1;ecf=ecf2", get_headers(out, "P-Charging-Function-Addresses"));
+  // Check quoting.  Note that IP addresses don't need to be quoted in the PCFA.
+  EXPECT_EQ("P-Charging-Function-Addresses: ccf=4.3.2.1;ccf=\"\\\\\\\"\\\\\";ecf=\"quote=this\";ecf=\"quote;this;as;well\"", get_headers(out, "P-Charging-Function-Addresses"));
 
   tpAS.expect_target(current_txdata(), false);
   inject_msg(respond_to_current_txdata(200));
@@ -1551,6 +1636,7 @@ TEST_F(RegistrarTest, DeregisterAppServersWithNoBody)
                                      user,
                                      "*",
                                      HSSConnection::DEREG_ADMIN,
+                                     SubscriberDataManager::EventTrigger::ADMIN,
                                      0);
 
   SCOPED_TRACE("deREGISTER");
@@ -2892,7 +2978,7 @@ TEST_F(RegistrarTest, RegistrationWithSubscription)
   s1->_expires = now + 300;
 
   aor_pair->get_current()->_associated_uris.add_uri(aor, false);
-  pj_status_t rc = _sdm->set_aor_data(aor, aor_pair, 0);
+  pj_status_t rc = _sdm->set_aor_data(aor, SubscriberDataManager::EventTrigger::USER, aor_pair, 0);
   EXPECT_TRUE(rc);
   delete aor_pair; aor_pair = NULL;
 
@@ -2928,15 +3014,28 @@ TEST_F(RegistrarTest, RegistrationWithSubscription)
   inject_msg(respond_to_current_txdata(200));
   free_txdata();
 
-  // Delete the registration
-  msg._expires = "Expires: 0";
+  // Change the Contact URI on the registration
+  msg._contact = "sip:f5cc3de4334589d89c661a7acf228ed7@10.114.61.214:5061;transport=tcp;ob";
   msg._cseq = "16570";
   msg._unique += 1;
   inject_msg(msg.get());
   ASSERT_EQ(2, txdata_count());
   out = pop_txdata()->msg;
   EXPECT_EQ("NOTIFY", str_pj(out->line.status.reason));
-  check_notify(out, aor, "terminated", std::make_pair("terminated", "expired"));
+  check_notify(out, aor, "active", std::make_pair("terminated", "deactivated"));
+  check_notify(out, aor, "active", std::make_pair("active", "created"), 1);
+  inject_msg(respond_to_current_txdata(200));
+  free_txdata();
+
+  // Delete the registration
+  msg._expires = "Expires: 0";
+  msg._cseq = "16571";
+  msg._unique += 1;
+  inject_msg(msg.get());
+  ASSERT_EQ(2, txdata_count());
+  out = pop_txdata()->msg;
+  EXPECT_EQ("NOTIFY", str_pj(out->line.status.reason));
+  check_notify(out, aor, "terminated", std::make_pair("terminated", "unregistered"));
   inject_msg(respond_to_current_txdata(200));
   free_txdata();
 }
@@ -2982,7 +3081,7 @@ TEST_F(RegistrarTest, NoNotifyToUnregisteredUser)
   s1->_expires = now + 300;
 
   aor_pair->get_current()->_associated_uris.add_uri(aor, false);
-  pj_status_t rc = _sdm->set_aor_data(aor, aor_pair, 0);
+  pj_status_t rc = _sdm->set_aor_data(aor, SubscriberDataManager::EventTrigger::USER, aor_pair, 0);
   EXPECT_TRUE(rc);
   delete aor_pair; aor_pair = NULL;
 
@@ -3041,7 +3140,7 @@ TEST_F(RegistrarTest, MultipleRegistrationsWithSubscription)
   s1->_expires = now + 300;
 
   aor_pair->get_current()->_associated_uris.add_uri(aor, false);
-  pj_status_t rc = _sdm->set_aor_data(aor, aor_pair, 0);
+  pj_status_t rc = _sdm->set_aor_data(aor, SubscriberDataManager::EventTrigger::USER, aor_pair, 0);
   EXPECT_TRUE(rc);
   delete aor_pair; aor_pair = NULL;
   ASSERT_EQ(1, txdata_count());
@@ -3072,7 +3171,7 @@ TEST_F(RegistrarTest, MultipleRegistrationsWithSubscription)
   ASSERT_EQ(2, txdata_count());
   out = pop_txdata()->msg;
   EXPECT_EQ("NOTIFY", str_pj(out->line.status.reason));
-  check_notify(out, aor, "active", std::make_pair("terminated", "expired"));
+  check_notify(out, aor, "active", std::make_pair("terminated", "unregistered"));
   inject_msg(respond_to_current_txdata(200));
   free_txdata();
 }
@@ -3374,10 +3473,10 @@ protected:
 // This is a repro for https://github.com/Metaswitch/sprout/issues/977
 TEST_F(RegistrarTestMockStore, SubscriberDataManagerWritesFail)
 {
-  EXPECT_CALL(*_local_data_store, get_data(_, _, _, _, _))
+  EXPECT_CALL(*_local_data_store, get_data(_, _, _, _, _, An<Store::Format>()))
     .WillOnce(Return(Store::NOT_FOUND));
 
-  EXPECT_CALL(*_local_data_store, set_data(_, _, _, _, _, _))
+  EXPECT_CALL(*_local_data_store, set_data(_, _, _, _, _, _, An<Store::Format>()))
     .WillOnce(Return(Store::ERROR));
 
   // We have a private ID in this test, so set up the expect response
@@ -3397,7 +3496,7 @@ TEST_F(RegistrarTestMockStore, SubscriberDataManagerWritesFail)
 
 TEST_F(RegistrarTestMockStore, SubscriberDataManagerGetsFail)
 {
-  EXPECT_CALL(*_local_data_store, get_data(_, _, _, _, _))
+  EXPECT_CALL(*_local_data_store, get_data(_, _, _, _, _, An<Store::Format>()))
     .WillOnce(Return(Store::ERROR));
 
   // We have a private ID in this test, so set up the expect response
@@ -3412,6 +3511,87 @@ TEST_F(RegistrarTestMockStore, SubscriberDataManagerGetsFail)
   ASSERT_EQ(1, txdata_count());
   pjsip_msg* out = current_txdata()->msg;
   EXPECT_EQ(500, out->line.status.code);
+  free_txdata();
+}
+
+// Test that if Homestead tells us that the subscriber was not previously
+// registered that we simply try to ADD it to the store instead of querying for
+// existing records first.
+TEST_F(RegistrarTestMockStore, DontReadOnInitialRegister)
+{
+  // Homestead returns a PreviousRegisterState indicating that this is an
+  // initial register.
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
+
+  // Expect the data to be set with a CAS of 0.
+  EXPECT_CALL(*_local_data_store, set_data(_, _, _, 0, _, _, An<Store::Format>()))
+    .WillOnce(Return(Store::OK));
+
+  Message msg;
+  msg._expires = "Expires: 300";
+  msg._auth = "Authorization: Digest username=\"Alice\", realm=\"atlanta.com\", nonce=\"84a4cc6f3082121f32b42a2187831a9e\", response=\"7587245234b3434cc3412213e5f113a5432\"";
+  msg._contact_params = ";+sip.ice;reg-id=1";
+  inject_msg(msg.get());
+  ASSERT_EQ(1, txdata_count());
+  pjsip_msg* out = current_txdata()->msg;
+  EXPECT_EQ(200, out->line.status.code);
+  free_txdata();
+}
+
+// Test that if Homestead tells us that the subscriber was not previously
+// registered that we simply try to ADD it to the store instead of querying for
+// existing records first, but that when that ADD fails (because there actually
+// was already data in the store) we fall back to querying the existing data and
+// correctly updating it instead.
+TEST_F(RegistrarTestMockStore, InitialRegisterAddFailure)
+{
+  // Homestead returns a PreviousRegisterState indicating that this is an
+  // initial register.
+  _hss_connection->set_impu_result_with_prev("sip:6505550231@homedomain", "reg", RegDataXMLUtils::STATE_REGISTERED, RegDataXMLUtils::STATE_NOT_REGISTERED, "", "?private_id=Alice");
+
+  InSequence s;
+
+  // Check that the registrar initially tries to ADD the data (set_data with cas=0). Simulate
+  // this ADD failing with a DATA_CONTENTION error.
+  EXPECT_CALL(*_local_data_store, set_data("reg", "sip:6505550231@homedomain", _, 0, _, _, An<Store::Format>()))
+    .WillOnce(Return(Store::DATA_CONTENTION));
+
+  // The ADD failed because there was data and so the Registrar should now try
+  // to get the existing data. Return example data with a cas value of 1 that might be present if
+  // there was a single binding for sip:f5cc3de4334589d89c661a7acf228ed7@10.114.61.214:5061.
+  std::string expiry_time = std::to_string(time(NULL) + 300);
+  std::string initial_data = (
+      "{\"bindings\":{"
+          "\"<urn:uuid:00000000-0000-0000-0000-777777777777>:1\":{\"uri\":\"sip:f5cc3de4334589d89c661a7acf228ed7@10.114.61.214:5061;transport=tcp;ob\",\"cid\":\"0gQAAC8WAAACBAAALxYAAAL8P3UbW8l4mT8YBkKGRKc5SOHaJ1gMRqs1042ohntC@10.114.61.213\",\"cseq\":10000,\"expires\":" + expiry_time + ",\"priority\":0,\"params\":{\"+sip.ice\":\"\",\"+sip.instance\":\"\\\"<urn:uuid:00000000-0000-0000-0000-777777777777>\\\"\",\"reg-id\":\"1\"},\"path_headers\":[\"<sip:GgAAAAAAAACYyAW4z38AABcUwStNKgAAa3WOL+1v72nFJg==@ec2-107-22-156-220.compute-1.amazonaws.com:5060;lr;ob>\"],\"paths\":[\"sip:GgAAAAAAAACYyAW4z38AABcUwStNKgAAa3WOL+1v72nFJg==@ec2-107-22-156-220.compute-1.amazonaws.com:5060;lr;ob\"],\"private_id\":\"Alice\",\"emergency_reg\":false}"
+       "},"
+       "\"subscriptions\":{},"
+       "\"associated-uris\":{\"uris\":[{\"uri\":\"sip:6505550231@homedomain\",\"barring\":false}],\"wildcard-mapping\":{}},\"notify_cseq\":2,\"timer_id\":\"post_identity\",\"scscf-uri\":\"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
+  EXPECT_CALL(*_local_data_store, get_data("reg", "sip:6505550231@homedomain", _, _, _, An<Store::Format>()))
+    .WillOnce(DoAll(SetArgReferee<2>(initial_data), // Returned data
+                    SetArgReferee<3>(1), // Returned CAS value
+                    Return(Store::OK)));
+
+  // Now the registrar should try and write back updated data including both
+  // the binding we returned on the get above (10.114.61.214) + the new binding
+  // we've just registered (10.114.61.213). Don't bother trying to work out
+  // exactly what data will be present -- just check for the 2 bindings.
+  EXPECT_CALL(*_local_data_store, set_data("reg",
+                                           "sip:6505550231@homedomain",
+                                           AllOf(HasSubstr("10.114.61.214"),
+                                                 HasSubstr("10.114.61.213")), // Updated data should contain both contacts
+                                           1, // CAS Value
+                                           _, _, An<Store::Format>()))
+    .WillOnce(Return(Store::OK));
+
+  Message msg;
+  msg._expires = "Expires: 300";
+  msg._auth = "Authorization: Digest username=\"Alice\", realm=\"atlanta.com\", nonce=\"84a4cc6f3082121f32b42a2187831a9e\", response=\"7587245234b3434cc3412213e5f113a5432\"";
+  msg._contact_params = ";+sip.ice;reg-id=1";
+  msg._contact = "sip:f5cc3de4334589d89c661a7acf228ed7@10.114.61.214:5061;transport=tcp;ob";
+  inject_msg(msg.get());
+  ASSERT_EQ(1, txdata_count());
+  pjsip_msg* out = current_txdata()->msg;
+  EXPECT_EQ(200, out->line.status.code);
   free_txdata();
 }
 

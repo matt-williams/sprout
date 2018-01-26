@@ -79,7 +79,12 @@ AoR* AstaireAoRStore::Connector::get_aor_data(
 
   std::string data;
   uint64_t cas;
-  Store::Status status = _data_store->get_data("reg", aor_id, data, cas, trail);
+  Store::Status status = _data_store->get_data("reg", 
+                                               aor_id,
+                                               data,
+                                               cas,
+                                               trail,
+                                               Store::Format::JSON);
 
   if (status == Store::Status::OK)
   {
@@ -144,7 +149,8 @@ Store::Status AstaireAoRStore::Connector::set_aor_data(
                                                data,
                                                aor_data->_cas,
                                                expiry,
-                                               trail);
+                                               trail,
+                                               Store::Format::JSON);
 
   TRC_DEBUG("Data store set_data returned %d", status);
 
@@ -232,14 +238,9 @@ AoR* AstaireAoRStore::JsonSerializerDeserializer::
     }
 
     JSON_GET_INT_MEMBER(doc, JSON_NOTIFY_CSEQ, aor->_notify_cseq);
-    aor->_timer_id =
-         ((doc.HasMember(JSON_TIMER_ID)) && ((doc[JSON_TIMER_ID]).IsString()) ?
-                                             (doc[JSON_TIMER_ID].GetString()) :
-                                              "");
-    aor->_scscf_uri =
-         ((doc.HasMember(JSON_SCSCF_URI)) && ((doc[JSON_SCSCF_URI]).IsString()) ?
-                                                (doc[JSON_SCSCF_URI].GetString()) :
-                                                 "");
+
+    JSON_SAFE_GET_STRING_MEMBER(doc, JSON_TIMER_ID, aor->_timer_id);
+    JSON_SAFE_GET_STRING_MEMBER(doc, JSON_SCSCF_URI, aor->_scscf_uri);
   }
   catch(JsonFormatError err)
   {

@@ -26,10 +26,13 @@ extern "C" {
 #include "sas.h"
 #include "sipresolver.h"
 #include "enumservice.h"
+#include "rphservice.h"
 #include "uri_classifier.h"
 #include "acr.h"
 
 namespace PJUtils {
+
+static const int DEFAULT_RETRIES = 5;
 
 pj_status_t init();
 void term();
@@ -65,12 +68,13 @@ std::string hdr_to_string(void* hdr);
 std::string extract_username(pjsip_authorization_hdr* auth_hdr, pjsip_uri* impu_uri);
 
 std::string public_id_from_uri(const pjsip_uri* uri);
+pj_bool_t valid_public_id_from_uri(const pjsip_uri* uri, std::string& impu);
 
 std::string default_private_id_from_uri(const pjsip_uri* uri);
 
 pj_str_t domain_from_uri(const std::string& uri_str, pj_pool_t* pool);
 
-pjsip_uri* orig_served_user(const pjsip_msg* msg);
+pjsip_uri* orig_served_user(const pjsip_msg* msg, pj_pool_t* pool, SAS::TrailId trail);
 
 pjsip_uri* term_served_user(const pjsip_msg* msg);
 
@@ -82,7 +86,7 @@ void add_pvni(pjsip_tx_data* tdata, pj_str_t* network_id);
 void add_asserted_identity(pjsip_msg* msg, pj_pool_t* pool, const std::string& aid, const pj_str_t& display_name);
 void add_asserted_identity(pjsip_tx_data* tdata, const std::string& aid);
 
-void get_impi_and_impu(pjsip_msg* req, std::string& impi_out, std::string& impu_out);
+void get_impi_and_impu(pjsip_msg* req, std::string& impi_out, std::string& impu_out, pj_pool_t* pool, SAS::TrailId trail);
 
 pjsip_uri* next_hop(pjsip_msg* msg);
 
@@ -153,6 +157,11 @@ pjsip_tx_data* create_cancel(pjsip_endpoint* endpt,
                              pjsip_tx_data* tdata,
                              int reason_code);
 
+BaseAddrIterator* resolve_iter(const std::string& name,
+                               int port,
+                               int transport,
+                               int allowed_host_state);
+
 void resolve(const std::string& name,
              int port,
              int transport,
@@ -160,13 +169,19 @@ void resolve(const std::string& name,
              std::vector<AddrInfo>& servers,
              int allowed_host_state);
 
+BaseAddrIterator* resolve_next_hop_iter(pjsip_tx_data* tdata,
+                                        int allowed_host_state,
+                                        SAS::TrailId trail);
+
 void resolve_next_hop(pjsip_tx_data* tdata,
                       int retries,
                       std::vector<AddrInfo>& servers,
                       int allowed_host_state,
                       SAS::TrailId trail);
 
-void blacklist_server(AddrInfo& server);
+void blacklist(AddrInfo& server);
+
+void success(AddrInfo& server);
 
 void set_dest_info(pjsip_tx_data* tdata, const AddrInfo& ai);
 
@@ -182,6 +197,12 @@ public:
 // A function that takes a token and a pjsip_event, and returns a Callback
 // object that can safely be run on another thread.
 typedef Callback* (*send_callback_builder)(void* token, pjsip_event* event);
+
+// Runs the specified callback on a worker thread.
+// `is_pjsip_thread` is used to allow a non-PJSIP owned thread (e.g. an HTTP
+// thread) to indicate that it can't possibly be the transport thread.
+void run_callback_on_worker_thread(PJUtils::Callback* cb,
+                                   bool is_pjsip_thread = true);
 
 pj_status_t send_request(pjsip_tx_data* tdata,
                          int retries=0,
@@ -212,7 +233,7 @@ pj_status_t respond_stateful(pjsip_endpoint* endpt,
 pjsip_tx_data *clone_tdata(pjsip_tx_data* tdata);
 void clone_header(const pj_str_t* hdr_name, pjsip_msg* old_msg, pjsip_msg* new_msg, pj_pool_t* pool);
 
-void add_top_via(pjsip_tx_data* tdata);
+pjsip_via_hdr* add_top_via(pjsip_tx_data* tdata);
 
 void remove_top_via(pjsip_tx_data* tdata);
 
@@ -225,6 +246,8 @@ typedef std::map<pj_sockaddr, bool, bool(*)(const pj_sockaddr&, const pj_sockadd
 void create_random_token(size_t length, std::string& token);
 
 std::string get_header_value(pjsip_hdr*);
+
+void mark_icid(const SAS::TrailId trail, pjsip_msg* msg);
 
 void mark_sas_call_branch_ids(const SAS::TrailId trail,
                               pjsip_msg* msg,
@@ -255,6 +278,11 @@ void add_pcfa_header(pjsip_msg* msg,
                      const std::deque<std::string>& ccfs,
                      const std::deque<std::string>& ecfs,
                      const bool replace);
+
+void add_pcfa_param(pj_list_type *cf_list,
+                    pj_pool_t* pool,
+                    const pj_str_t name,
+                    std::string value);
 
 pjsip_uri* translate_sip_uri_to_tel_uri(const pjsip_sip_uri* sip_uri,
                                         pj_pool_t* pool);
@@ -302,7 +330,7 @@ std::set<pjmedia_type> get_media_types(const pjsip_msg *msg);
 
 // Get the next routing URI - this is the top routing header (or the
 // request URI if there's no route headers), and it's context.
-// The URI returned is only valid while the passed in PJSIP message is valid
+// The URI returned is only valid while the passed in PJSIP message is valid.
 pjsip_uri* get_next_routing_uri(const pjsip_msg* msg,
                                 pjsip_uri_context_e* context);
 
@@ -349,6 +377,29 @@ bool is_param_in_route_hdr(const pjsip_route_hdr* route,
 /// @return           - Whether the parameter was present or not.
 bool is_param_in_top_route(const pjsip_msg* req,
                            const pj_str_t* param_name);
+
+/// Add a header immediately above the topmost existing instance of that
+/// header.  If there are no other instances of the header, add it at the very
+/// top of the message.  This is useful for keeping headers of the same type
+/// grouped together.  While that is not required by the SIP RFCs, it does make
+/// analysis of SIP flows much simpler.
+///
+/// @param msg        - The message to which the header should be added
+/// @param hdr        - The header to add
+void add_top_header(pjsip_msg* msg, pjsip_hdr* hdr);
+
+/// Gets the priority of a message, based on the Resource-Priority headers.
+/// The priority is an integer between 0 and 15, where 0 is the default
+/// priority and 15 is the highest priority.
+///
+/// @param msg         - The message to determine the priority of.
+/// @param rph_service - Used to lookup the priority of an RPH value.
+/// @trail             - The SAS trail ID.
+///
+/// @return            - The priority of the message.
+SIPEventPriorityLevel get_priority_of_message(const pjsip_msg* msg,
+                                              RPHService* rph_service,
+                                              SAS::TrailId trail);
 
 } // namespace PJUtils
 

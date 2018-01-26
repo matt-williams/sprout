@@ -283,14 +283,26 @@ public:
   /// non-INVITE requests the fork is terminated immediately.
   ///
   /// @param fork_id       - The identifier of the fork to cancel.
+  /// @param st_code       - SIP status code to include in the Reason header
+  ///                        on any CANCEL message sent.  A value of zero
+  ///                        means no Reason header will be included.
+  /// @param reason        - Human-readable reason string.  For diagnostics only.
   ///
-  virtual void cancel_fork(int fork_id, int reason=0) = 0;
+  virtual void cancel_fork(int fork_id, int st_code = 0, std::string reason = "") = 0;
 
   /// Cancels all pending forked requests by either sending a CANCEL request
   /// (for INVITE requests) or terminating the transaction (for non-INVITE
   /// requests).
   ///
-  virtual void cancel_pending_forks(int reason=0) = 0;
+  /// @param st_code       - SIP status code to include in the Reason header
+  ///                        on any CANCEL message sent.  A value of zero
+  ///                        means no Reason header will be included.
+  /// @param reason        - Human-readable reason string.  For diagnostics only.
+  ///
+  virtual void cancel_pending_forks(int st_code = 0, std::string reason = "") = 0;
+
+  /// Marks all pending forked requests as timed out.
+  virtual void mark_pending_forks_as_abandoned() = 0;
 
   /// Returns the current status of a downstream fork, including the
   /// transaction state and whether a timeout or transport error has been
@@ -358,7 +370,8 @@ public:
   ///
   virtual SAS::TrailId trail() const = 0;
 
-  /// Get the URI that caused us to be routed to this Sproutlet.
+  /// Get the URI that caused us to be routed to this Sproutlet or if no such
+  /// URI exists e.g. if the Sproutlet was matched on a port, return NULL.
   ///
   /// @returns            - The URI that routed to this Sproutlet.
   ///
@@ -617,16 +630,25 @@ protected:
   /// non-INVITE requests the fork is terminated immediately.
   ///
   /// @param fork_id       - The identifier of the fork to cancel.
+  /// @param st_code       - SIP status code to use on the CANCEL.
+  /// @param reason        - Human-readable reason string.  For diagnostics only.
   ///
-  void cancel_fork(int fork_id, int reason=0)
-    {_helper->cancel_fork(fork_id, reason);}
+  void cancel_fork(int fork_id, int st_code = 0, std::string reason = "")
+    {_helper->cancel_fork(fork_id, st_code, reason);}
 
   /// Cancels all pending forked requests by either sending a CANCEL request
   /// (for INVITE requests) or terminating the transaction (for non-INVITE
   /// requests).
   ///
-  void cancel_pending_forks(int reason=0)
-    {_helper->cancel_pending_forks(reason);}
+  /// @param st_code       - SIP status code to use on the CANCEL.
+  /// @param reason        - Human-readable reason string.  For diagnostics only.
+  ///
+  void cancel_pending_forks(int st_code = 0, std::string reason = "")
+    {_helper->cancel_pending_forks(st_code, reason);}
+
+  /// Marks all pending forks as timed out.
+  void mark_pending_forks_as_abandoned()
+    {_helper->mark_pending_forks_as_abandoned();}
 
   /// Returns the current status of a downstream fork, including the
   /// transaction state and whether a timeout or transport error has been
@@ -702,7 +724,8 @@ protected:
   SAS::TrailId trail() const
     {return _helper->trail();}
 
-  /// Get the URI that caused us to be routed to this Sproutlet.
+  /// Get the URI that caused us to be routed to this Sproutlet or if no such
+  /// URI exists e.g. if the Sproutlet was matched on a port, return NULL.
   ///
   /// @returns            - The URI that routed to this Sproutlet.
   ///
@@ -759,8 +782,10 @@ public:
   /// Virtual descrustor.
   virtual ~SproutletHelper() {}
 
-  /// Gets the URI that caused this request to be routed to this Sproutlet.
-  virtual pjsip_sip_uri* get_routing_uri(const pjsip_msg* req) const = 0;
+  /// Get the URI that caused us to be routed to this Sproutlet or if no such
+  /// URI exists e.g. if the Sproutlet was matched on a port, return NULL.
+  virtual pjsip_sip_uri* get_routing_uri(const pjsip_msg* req,
+                                         const Sproutlet* sproutlet) const = 0;
 
   /// Constructs the next URI for the Sproutlet that doesn't want to handle a
   /// request.
@@ -774,8 +799,7 @@ public:
   ///
   /// If the URI is not a SIP URI, this function returns FALSE.
   virtual bool is_uri_reflexive(const pjsip_uri* uri,
-                                Sproutlet* sproutlet,
-                                SAS::TrailId trail) = 0;
+                                const Sproutlet* sproutlet) const = 0;
 };
 
 #endif

@@ -52,7 +52,9 @@ public:
                  EnumService* enum_service,
                  SNMP::SuccessFailCountByRequestTypeTable* incoming_sip_transactions_tbl,
                  SNMP::SuccessFailCountByRequestTypeTable* outgoing_sip_transactions_tbl,
-                 bool override_npdi);
+                 bool override_npdi,
+                 int network_function_port,
+                 std::set<std::string> blacklisted_scscfs = std::set<std::string>());
 
   virtual ~ICSCFSproutlet();
 
@@ -88,6 +90,11 @@ private:
     return _override_npdi;
   }
 
+  inline int network_function_port() const
+  {
+    return _network_function_port;
+  }
+
   /// Attempts to use ENUM to translate the specified Tel URI into a SIP URI.
   void translate_request_uri(pjsip_msg* req, pj_pool_t* pool, SAS::TrailId trail);
 
@@ -119,6 +126,13 @@ private:
   /// Stats tables
   SNMP::SuccessFailCountTable* _session_establishment_tbl = NULL;
   SNMP::SuccessFailCountTable* _session_establishment_network_tbl = NULL;
+
+  /// Port owned by this network function, for purposes other than Sproutlet
+  /// routing.
+  int _network_function_port;
+
+  /// The list of blacklisted S-CSCFs
+  std::set<std::string> _blacklisted_scscfs;
 };
 
 

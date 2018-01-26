@@ -60,14 +60,14 @@ public:
 
 
     // Load monitor with one token in the bucket at startup.
-    _lm = new LoadMonitor(0, 1, 0, 0);
+    _lm = new LoadMonitor(0, 1, 0, 0, 0);
 
     _requests_counter = &SNMP::FAKE_COUNTER_BY_SCOPE_TABLE;
     _overload_counter = &SNMP::FAKE_COUNTER_BY_SCOPE_TABLE;
 
     _health_checker = new HealthChecker();
 
-    init_common_sip_processing(_lm, _requests_counter, _overload_counter, _health_checker);
+    init_common_sip_processing(_requests_counter, _health_checker);
   }
 
   ~CommonProcessingTest()
@@ -181,6 +181,89 @@ static pjsip_module mod_reject =
 
 using TestingCommon::Message;
 
+TEST_F(CommonProcessingTest, OptionsPollPingICSCF)
+{
+  /// Test OPTIONS request to a local node address (ICSCF) in the following 3 cases:
+  /// Case 1. Standard OPTIONS ping
+  /// Case 2. "user=phone" URI parameter is incorrectly added to the request URI and
+  ///         the URI contains the user part.
+  ///         The parameter should be ignored and a 200 OK response received.
+  /// Case 3. "user=phone" URI parameter is incorrectly added to the request URI and
+  ///         the URI does not contain the user part.
+  ///         The parameter should be ignored and a 200 OK response received.
+
+  pjsip_tx_data* tdata;
+
+  //Create a TCP connection to the I-CSCF listening port.  
+  delete(_tp);
+  _tp = new TransportFlow(TransportFlow::Protocol::TCP,
+                                        ICSCF_PORT,
+                                        "127.0.0.1",
+                                        49152);
+
+  // Set up a new Load monitor with enough tokens for each test.
+  delete(_lm);
+  _lm = new LoadMonitor(0, 3, 0, 0, 0);
+  init_common_sip_processing(_requests_counter, _health_checker);
+
+  pjsip_endpt_register_module(stack_data.endpt, &mod_ok);
+
+  /// Case 1.
+  // Inject an OPTIONS poll request.
+  Message msg1;
+  msg1._first_hop = true;
+  msg1._method = "OPTIONS";
+  msg1._requri = std::string("sip:poll-sip@127.0.0.1:") + std::to_string(ICSCF_PORT);
+  msg1._via = "127.0.0.1";
+  msg1._todomain = std::string("127.0.0.1:") + std::to_string(ICSCF_PORT);
+  msg1._to = "poll-sip";
+  msg1._fromdomain = "127.0.0.1";
+  msg1._from = msg1._to;
+  msg1._contentlength = false;
+  msg1._extra = "Contact: <sip:127.0.0.1>\nAccept: application/sdp\nContent-Length: 0";
+  inject_msg(msg1.get_request(), _tp);
+
+  // Expect a 200 OK response.
+  ASSERT_EQ(1, txdata_count());
+  tdata = current_txdata();
+  RespMatcher r1(200);
+  r1.matches(tdata->msg);
+
+  free_txdata();
+
+  /// Case 2.
+  // Inject an OPTIONS poll request.
+  Message msg2 = msg1;
+  msg2._requri += std::string(";user=phone");
+  inject_msg(msg2.get_request(), _tp);
+
+  // Expect a 200 OK response.
+  ASSERT_EQ(1, txdata_count());
+  tdata = current_txdata();
+  RespMatcher r2(200);
+  r2.matches(tdata->msg);
+
+  free_txdata();
+
+  /// Case 3.
+  // Inject an OPTIONS poll request.
+  Message msg3 = msg1;
+  msg3._requri = std::string("sip:127.0.0.1:") + std::to_string(ICSCF_PORT) + std::string(";user=phone");
+  msg3._to = "";
+  msg3._from = msg3._to;
+  inject_msg(msg3.get_request(), _tp);
+
+  // Expect a 200 OK response.
+  ASSERT_EQ(1, txdata_count());
+  tdata = current_txdata();
+  RespMatcher r3(200);
+  r3.matches(tdata->msg);
+
+  free_txdata();
+
+  pjsip_endpt_unregister_module(stack_data.endpt, &mod_ok);
+}
+
 TEST_F(CommonProcessingTest, RequestAllowed)
 {
   // Tests that, when there is a token in the load monitor's bucket, a
@@ -194,30 +277,6 @@ TEST_F(CommonProcessingTest, RequestAllowed)
   // As only the common processing module is loaded (and not anything
   // that will actually handle the request), expect it to just disappear.
   ASSERT_EQ(0, txdata_count());
-}
-
-TEST_F(CommonProcessingTest, RequestRejectedWithOverload)
-{
-  // Tests that, when there is no token in the load monitor's bucket, a
-  // request is rejected with 503 Service Unavailable.
-
-  pjsip_tx_data* tdata;
-
-  // Consume the only token in the bucket.
-  _lm->admit_request(0);
-
-  // Inject a request.
-  Message msg1;
-  msg1._first_hop = true;
-  inject_msg(msg1.get_request(), _tp);
-
-  // Expect a 503 response code.
-  ASSERT_EQ(1, txdata_count());
-  tdata = current_txdata();
-  RespMatcher r1(503);
-  r1.matches(tdata->msg);
-
-  free_txdata();
 }
 
 TEST_F(CommonProcessingTest, AckRequestAlwaysAllowed)
@@ -319,8 +378,8 @@ TEST_F(CommonProcessingTest, SupportedHeaderWithCommas)
 
   // Set up a new Load monitor with enough tokens for each test.
   delete(_lm);
-  _lm = new LoadMonitor(0, headers.size(), 0, 0);
-  init_common_sip_processing(_lm, _requests_counter, _overload_counter, _health_checker);
+  _lm = new LoadMonitor(0, headers.size(), 0, 0, 0);
+  init_common_sip_processing(_requests_counter, _health_checker);
 
   pjsip_endpt_register_module(stack_data.endpt, &mod_ok);
 

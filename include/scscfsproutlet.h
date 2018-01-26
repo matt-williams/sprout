@@ -30,7 +30,6 @@ extern "C" {
 #include "stack.h"
 #include "sessioncase.h"
 #include "ifchandler.h"
-#include "mmfservice.h"
 #include "hssconnection.h"
 #include "aschain.h"
 #include "acr.h"
@@ -54,8 +53,6 @@ public:
                  const std::string& scscf_node_uri,
                  const std::string& icscf_uri,
                  const std::string& bgcf_uri,
-                 const std::string& mmf_cluster_uri,
-                 const std::string& mmf_node_uri,
                  int port,
                  const std::string& uri,
                  const std::string& network_function,
@@ -68,7 +65,6 @@ public:
                  SNMP::SuccessFailCountByRequestTypeTable* incoming_sip_transactions_tbl,
                  SNMP::SuccessFailCountByRequestTypeTable* outgoing_sip_transactions_tbl,
                  bool override_npdi,
-                 MMFService* mmfservice,
                  FIFCService* fifcservice,
                  IFCConfiguration ifc_configuration,
                  int session_continued_timeout = DEFAULT_SESSION_CONTINUED_TIMEOUT,
@@ -116,13 +112,6 @@ private:
   /// Returns the configured BGCF URI for this system.
   const pjsip_uri* bgcf_uri() const;
 
-  /// Returns the configured MMF cluster URI for this system.
-  const pjsip_uri* mmf_cluster_uri() const;
-
-  /// Returns the configured MMF node URI for this system.
-  const pjsip_uri* mmf_node_uri() const;
-
-  MMFService* mmfservice() const;
   FIFCService* fifcservice() const;
   IFCConfiguration ifc_configuration() const;
 
@@ -137,24 +126,6 @@ private:
   void remove_binding(const std::string& aor,
                       const std::string& binding_id,
                       SAS::TrailId trail);
-
-  /// Read data for a public user identity from the HSS. Returns the HTTP result
-  /// code obtained from homestead.
-  long read_hss_data(const std::string& public_id,
-                     const std::string& private_id,
-                     const std::string& req_type,
-                     const std::string& scscf_uri,
-                     bool cache_allowed,
-                     bool& registered,
-                     bool& barred,
-                     std::string& default_uri,
-                     std::vector<std::string>& uris,
-                     std::vector<std::string>& aliases,
-                     Ifcs& ifcs,
-                     std::deque<std::string>& ccfs,
-                     std::deque<std::string>& ecfs,
-                     const std::string& wildcard,
-                     SAS::TrailId trail);
 
   /// Record that communication with an AS failed.
   ///
@@ -206,14 +177,6 @@ private:
   /// A URI which routes to the BGCF.
   pjsip_uri* _bgcf_uri;
 
-  /// A URI which routes to the MMF cluster.
-  pjsip_uri* _mmf_cluster_uri;
-
-  /// A URI which routes to this particular MMF node.  This must be
-  /// constructed using an IP address or a domain name which resolves to this
-  /// Sprout node only.
-  pjsip_uri* _mmf_node_uri;
-
   std::string _next_hop_service;
 
   SubscriberDataManager* _sdm;
@@ -228,7 +191,6 @@ private:
   AsChainTable* _as_chain_table;
 
   bool _override_npdi;
-  MMFService* _mmfservice;
   FIFCService* _fifcservice;
   IFCConfiguration _ifc_configuration;
 
@@ -241,8 +203,6 @@ private:
   std::string _scscf_node_uri_str;
   std::string _icscf_uri_str;
   std::string _bgcf_uri_str;
-  std::string _mmf_cluster_uri_str;
-  std::string _mmf_node_uri_str;
 
   SNMP::CounterTable* _routed_by_preloaded_route_tbl = NULL;
   SNMP::CounterTable* _invites_cancelled_before_1xx_tbl = NULL;
@@ -301,13 +261,6 @@ private:
   /// Apply terminating services for this request.
   void apply_terminating_services(pjsip_msg* req);
 
-  /// Adds the passed in MMF URI parameters to the passed in MMF uri.
-  void add_mmf_uri_parameters(pjsip_sip_uri* mmf_uri,
-                              pj_str_t as_transport_param,
-                              std::string mmfscope_param,
-                              std::string mmftarget_param,
-                              pj_pool_t* pool);
-
   /// Route the request to an application server.
   void route_to_as(pjsip_msg* req,
                    const std::string& server_name);
@@ -336,6 +289,12 @@ private:
   /// Gets the subscriber's associated URIs and iFCs for each URI from
   /// the HSS. Returns the HTTP result code received from homestead.
   long get_data_from_hss(std::string public_id);
+
+  /// Read data for a public user identity from the HSS. Returns the HTTP result
+  /// code obtained from homestead.
+  long read_hss_data(const HSSConnection::irs_query& irs_query,
+                     HSSConnection::irs_info& irs_info,
+                     SAS::TrailId trail);
 
   /// Look up the registration state for the given public ID, using the
   /// per-transaction cache if possible (and caching them and the iFC otherwise).
@@ -414,11 +373,8 @@ private:
   bool _registered;
   bool _barred;
   std::string _default_uri;
-  std::vector<std::string> _uris;
-  std::vector<std::string> _aliases;
   Ifcs _ifcs;
-  std::deque<std::string> _ccfs;
-  std::deque<std::string> _ecfs;
+  HSSConnection::irs_info _irs_info;
 
   /// ACRs used where the S-CSCF will only process a single transaction (no
   /// AsChain is created).  There are two cases where this might be true:
@@ -503,6 +459,12 @@ private:
 
   /// Get the base request that the S-CSCF should use when retrying a request.
   pjsip_msg* get_base_request();
+
+  /// SAS logs that the next hop URI is invalid and rejects the request with a
+  /// 400 Bad Request error (which also frees the request).
+  /// @param req     The request to rejet
+  /// @param uri_str The URI string to add to the SAS log
+  void reject_invalid_uri(pjsip_msg* req, const std::string& uri_str);
 
   /// The S-CSCF URI for this transaction. This is used in the SAR sent to the
   /// HSS. This field should not be changed once it has been set by the

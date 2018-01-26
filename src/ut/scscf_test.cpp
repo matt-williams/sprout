@@ -49,7 +49,6 @@ using testing::_;
 using testing::NiceMock;
 using testing::HasSubstr;
 using ::testing::Return;
-using ::testing::AtLeast;
 using ::testing::SaveArg;
 
 // TODO - make this class more consistent with the
@@ -99,7 +98,6 @@ public:
     _enum_service = new JSONEnumService(string(UT_DIR).append("/test_stateful_proxy_enum.json"));
 
     _acr_factory = new ACRFactory();
-    _mmf_service = new MMFService(NULL, string(UT_DIR).append("/test_mmf_targets.json"));
     _fifc_service = new FIFCService(NULL, string(UT_DIR).append("/test_scscf_fifc.xml"));
 
     // Schedule timers.
@@ -111,7 +109,6 @@ public:
     // Shut down the transaction module first, before we destroy the
     // objects that might handle any callbacks!
     pjsip_tsx_layer_destroy();
-    delete _mmf_service; _mmf_service = NULL;
     delete _fifc_service; _fifc_service = NULL;
     delete _acr_factory; _acr_factory = NULL;
     delete _sdm; _sdm = NULL;
@@ -154,6 +151,12 @@ public:
                                                   &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                                   &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
                                                   "mmtel.homedomain");
+
+    // We don't care about this function call, but if gtest prints it out as
+    // uninteresting mock function call, a memory warning will be issued by
+    // valgrind. So put the expectation here to prevent that printing.
+    EXPECT_CALL(*_hss_connection_observer, update_registration_state(_, _, _))
+      .WillRepeatedly(Return(0));
   }
 
   ~SCSCFTestBase()
@@ -252,7 +255,6 @@ protected:
   static BgcfService* _bgcf_service;
   static EnumService* _enum_service;
   static ACRFactory* _acr_factory;
-  static MMFService* _mmf_service;
   static FIFCService* _fifc_service;
   BGCFSproutlet* _bgcf_sproutlet;
   SCSCFSproutlet* _scscf_sproutlet;
@@ -301,7 +303,6 @@ FakeXDMConnection* SCSCFTestBase::_xdm_connection;
 BgcfService* SCSCFTestBase::_bgcf_service;
 EnumService* SCSCFTestBase::_enum_service;
 ACRFactory* SCSCFTestBase::_acr_factory;
-MMFService* SCSCFTestBase::_mmf_service;
 FIFCService* SCSCFTestBase::_fifc_service;
 SCSCFSelector* SCSCFTestBase::_scscf_selector;
 MockAsCommunicationTracker* SCSCFTestBase::_sess_term_comm_tracker;
@@ -330,8 +331,6 @@ public:
                                           "sip:127.0.0.1:5058",
                                           "sip:icscf.sprout.homedomain:5059;transport=TCP",
                                           "sip:bgcf@homedomain:5058",
-                                          "sip:11.22.33.44;service=mmf",
-                                          "sip:44.33.22.11:5053;service=mmf",
                                           5058,
                                           "sip:scscf.sprout.homedomain:5058;transport=TCP",
                                           "scscf",
@@ -344,7 +343,6 @@ public:
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
                                           false,
-                                          _mmf_service,
                                           _fifc_service,
                                           ifc_configuration,
                                           3000, // Session continue timeout - different from default
@@ -369,7 +367,8 @@ public:
                                           _enum_service,
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
-                                          false
+                                          false,
+                                          5059
                                           );
     _icscf_sproutlet->init();
 
@@ -438,6 +437,7 @@ void SCSCFTestBase::doFourAppServerFlow(std::string record_route_regex, bool app
   TransportFlow tpAS2(TransportFlow::Protocol::UDP, stack_data.scscf_port, "4.2.3.4", 56788);
   TransportFlow tpAS3(TransportFlow::Protocol::UDP, stack_data.scscf_port, "5.2.3.4", 56787);
   TransportFlow tpAS4(TransportFlow::Protocol::UDP, stack_data.scscf_port, "6.2.3.4", 56786);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   pjsip_rr_hdr* as1_rr_hdr = pjsip_rr_hdr_create(stack_data.pool);
   as1_rr_hdr->name_addr.uri = (pjsip_uri*)pjsip_sip_uri_create(stack_data.pool, false);
@@ -624,7 +624,8 @@ void SCSCFTestBase::doFourAppServerFlow(std::string record_route_regex, bool app
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
 
   // ---------- Bono sends a 100 Trying to indicate it has received the request.
   string fresp_bono = respond_to_txdata(current_txdata(), 100);
@@ -2618,10 +2619,12 @@ TEST_F(SCSCFTest, SimpleISCMainline)
   _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
                               "{\"result-code\": 2001,"
                               " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
+
   EXPECT_CALL(*_sess_cont_comm_tracker, on_success(StrEq("sip:1.2.3.4:56789;transport=UDP")));
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -2684,7 +2687,8 @@ TEST_F(SCSCFTest, SimpleISCMainline)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -2724,6 +2728,7 @@ TEST_F(SCSCFTest, ISCMultipleResponses)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -2786,7 +2791,8 @@ TEST_F(SCSCFTest, ISCMultipleResponses)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -2837,6 +2843,7 @@ TEST_F(SCSCFTest, ISCRetargetWithoutCdiv)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -2897,7 +2904,8 @@ TEST_F(SCSCFTest, ISCRetargetWithoutCdiv)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -3107,6 +3115,7 @@ TEST_F(SCSCFTest, SimpleNextOrigFlow)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -3167,7 +3176,8 @@ TEST_F(SCSCFTest, SimpleNextOrigFlow)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -3565,17 +3575,16 @@ TEST_F(SCSCFTest, DefaultHandlingTerminate)
 }
 
 
-// Bug for both session terminated and session continue (see clearwater-issues)
-// When liveness timer pops before SIP response is received from AS, Sprout
-// doesn't send immediate failure upstream but keeps retrying.
-// Currently the test is made to pass superficially to achieve full coverage
+// Test that if an AS is unresponsive (ie. does not respond before it times
+// out), and Default Handling is set to Session Terminated, that the call is
+// rejected (without waiting for all retries to the AS to time out).
 TEST_F(SCSCFTest, DefaultHandlingTerminateTimeout)
 {
   // Register an endpoint to act as the callee.
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
 
   // Set up an application server for the caller. It's default handling is set
-  // to session continue.
+  // to session terminated.
   ServiceProfileBuilder service_profile = ServiceProfileBuilder()
     .addIdentity("sip:6505551000@homedomain")
     .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
@@ -3586,16 +3595,12 @@ TEST_F(SCSCFTest, DefaultHandlingTerminateTimeout)
                                    "UNREGISTERED",
                                    subscription.return_sub());
 
-  // The tracker should be called only once. Currently there is a code bug that
-  // Sprout keeps retrying if liveness timer pops before AS response is
-  // received. So the tracker are being  called several times.
-  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout"))).Times(AtLeast(1));
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout")));
 
   TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
-  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
-  // Caller sends INVITE
+  // Caller sends INVITE.
   SCSCFMessage msg;
   msg._via = "10.99.88.11:12345;transport=TCP";
   msg._to = "6505551234@homedomain";
@@ -3608,35 +3613,583 @@ TEST_F(SCSCFTest, DefaultHandlingTerminateTimeout)
   poll();
   ASSERT_EQ(2, txdata_count());
 
-  // 100 Trying goes back to caller
+  // 100 Trying goes back to caller.
   pjsip_msg* out = current_txdata()->msg;
   RespMatcher(100).matches(out);
   tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
   msg.convert_routeset(out);
   free_txdata();
 
-  // INVITE passed on to AS
+  // INVITE passed on to AS.
   out = current_txdata()->msg;
   ReqMatcher r1("INVITE");
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
   free_txdata();
 
   // Advance time without receiving a response. The application server is
-  // bypassed. Give plenty of time for retrying.
-  cwtest_advance_time_ms(60000);
-
-  // 408 received at callee.
+  // bypassed.
+  cwtest_advance_time_ms(6001);
   poll();
-  ASSERT_EQ(1, txdata_count());
 
+  // 408 received at caller, without having to advance time again.
+  ASSERT_EQ(1, txdata_count());
   out = current_txdata()->msg;
   RespMatcher(408).matches(out);
   tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
   free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(0, txdata_count());
 }
 
 
-// Disabled because terminated default handling is broken at the moment.
+// Test that after a 408 has been sent in response to an unresponsive AS, a 100
+// Trying response from the AS is still handled.
+TEST_F(SCSCFTest, DefaultHandlingTerminate100AfterTimeout)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session terminated.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller.
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // INVITE passed on to AS.
+  // Save off the INVITE, as it is needed later on in the test.
+  out = current_txdata()->msg;
+  ReqMatcher r1("INVITE");
+  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
+  pjsip_tx_data* inv_for_as = pop_txdata();
+
+  // Advance time without receiving a response. The application server is
+  // bypassed.
+  cwtest_advance_time_ms(6001);
+  poll();
+
+  // 408 received at caller.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(408).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(0, txdata_count());
+
+  // Advance some more time.
+  cwtest_advance_time_ms(6000);
+  poll();
+
+  // Now the AS finally responds with a 100 Trying.
+  inject_msg(respond_to_txdata(inv_for_as, 100), &tpAS1);
+
+  // Respond to the AS with a CANCEL, as the timeout error has already been sent
+  // to the caller.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("CANCEL").matches(out);
+  tpAS1.expect_target(current_txdata(), true);
+
+  // AS responds to the CANCEL with a 200 OK.
+  inject_msg(respond_to_txdata(current_txdata(), 200), &tpAS1);
+  free_txdata();
+
+  // AS sends back a 487 for the cancelled INVITE.
+  inject_msg(respond_to_txdata(inv_for_as, 487), &tpAS1);
+
+  // Confirm that sprout ACKs the 487.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("ACK").matches(out);
+  tpAS1.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Check no other messages are pending.
+  ASSERT_EQ(0, txdata_count());
+  pjsip_tx_data_dec_ref(inv_for_as); inv_for_as = NULL;
+}
+
+
+// Test that after a 408 has been sent in response to an unresponsive AS, a 100
+// Trying response from the AS is still handled (while handling a MESSAGE).
+TEST_F(SCSCFTest, DefaultHandlingTerminateMessage100AfterTimeout)
+{
+  // Register an endpoint to act as UE2.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for UE1. It's default handling is set to
+  // session terminated.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>MESSAGE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpUE1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+
+  // UE1 sends MESSAGE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "MESSAGE";
+  inject_msg(msg.get_request(), &tpUE1);
+  poll();
+  ASSERT_EQ(1, txdata_count());
+
+  // MESSAGE passed on to AS.
+  // Save off the MESSAGE, as it is needed later on in the test.
+  pjsip_msg* out = current_txdata()->msg;
+  ReqMatcher r1("MESSAGE");
+  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
+  pjsip_tx_data* msg_for_as = pop_txdata();
+
+  // Advance time by just over 3.5 secs, so that a delayed 100 Trying will be
+  // returned to UE1.
+  cwtest_advance_time_ms(3501);
+  poll();
+
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpUE1.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  free_txdata();
+
+  // Advance time further without receiving a response.
+  // The application server is bypassed after 6s, so advance to reach this
+  // (remembering we have already advanced 3.5s).
+  cwtest_advance_time_ms(2500);
+  poll();
+
+  // Check that a 408 is sent to UE1, as the request to the AS has timed out.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(408).matches(out);
+  tpUE1.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  free_txdata();
+
+  // Advance some more time.
+  cwtest_advance_time_ms(6000);
+  poll();
+
+  // Now the AS finally responds with a 100 Trying. This doesn't trigger a
+  // CANCEL, as it was a response to a MESSAGE.
+  inject_msg(respond_to_txdata(msg_for_as, 100), &tpAS1);
+  ASSERT_EQ(0, txdata_count());
+
+  // AS sends back a 200 for the MESSAGE.
+  inject_msg(respond_to_txdata(msg_for_as, 200), &tpAS1);
+
+  // Check no other messages are pending.
+  ASSERT_EQ(0, txdata_count());
+  pjsip_tx_data_dec_ref(msg_for_as); msg_for_as = NULL;
+}
+
+
+// Test that after a 408 has been sent in response to an unresponsive AS, a 200
+// OK response from the AS is still handled.
+TEST_F(SCSCFTest, DefaultHandlingTerminate200AfterTimeout)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session terminated.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller.
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // INVITE passed on to AS.
+  // Save off the INVITE, as it is needed later on in the test.
+  out = current_txdata()->msg;
+  ReqMatcher r1("INVITE");
+  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
+  pjsip_tx_data* inv_for_as = pop_txdata();
+
+  // Advance time without receiving a response. The application server is
+  // bypassed.
+  cwtest_advance_time_ms(6001);
+  poll();
+
+  // 408 received at caller.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(408).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(0, txdata_count());
+
+  // Advance some more time.
+  cwtest_advance_time_ms(6000);
+  poll();
+
+  // Now the AS finally responds with a 200 OK.
+  // As a 408 response has already been sent upstream, this 200 OK shouldn't be
+  // passed on. Also, since the AS is not currently trying, no CANCEL will be
+  // sent to the AS either.
+  inject_msg(respond_to_txdata(inv_for_as, 200), &tpAS1);
+
+  // Check no other messages are pending.
+  ASSERT_EQ(0, txdata_count());
+}
+
+
+// Test that after a 408 has been sent in response to an unresponsive AS, a 4xx
+// error response from the AS is still handled.
+TEST_F(SCSCFTest, DefaultHandlingTerminate4xxAfterTimeout)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session terminated.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller.
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // INVITE passed on to AS.
+  // Save off the INVITE, as it is needed later on in the test.
+  out = current_txdata()->msg;
+  ReqMatcher r1("INVITE");
+  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
+  pjsip_tx_data* inv_for_as = pop_txdata();
+
+  // Advance time without receiving a response. The application server is
+  // bypassed.
+  cwtest_advance_time_ms(6001);
+  poll();
+
+  // 408 received at caller.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(408).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(0, txdata_count());
+
+  // Advance some more time.
+  cwtest_advance_time_ms(6000);
+  poll();
+
+  // Now the AS finally responds with a 403 (a 4xx error code chosen at random).
+  inject_msg(respond_to_txdata(inv_for_as, 403), &tpAS1);
+
+  // Confirm sprout responds to the error from the AS with an ACK.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("ACK").matches(out);
+  tpAS1.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Check error is not forwarded on, as timeout error has already been sent.
+  ASSERT_EQ(0, txdata_count());
+}
+
+
+// Test that after a 408 has been sent in response to an unresponsive AS, a 5xx
+// error response from the AS is still handled.
+TEST_F(SCSCFTest, DefaultHandlingTerminate5xxAfterTimeout)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session terminated.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("timeout")));
+  EXPECT_CALL(*_sess_term_comm_tracker, on_failure(_, HasSubstr("501")));
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller.
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // INVITE passed on to AS.
+  // Save off the INVITE, as it is needed later on in the test.
+  out = current_txdata()->msg;
+  ReqMatcher r1("INVITE");
+  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
+  pjsip_tx_data* inv_for_as = pop_txdata();
+
+  // Advance time without receiving a response. The application server is
+  // bypassed.
+  cwtest_advance_time_ms(6001);
+  poll();
+
+  // 408 received at caller.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(408).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(0, txdata_count());
+
+  // Advance some more time.
+  cwtest_advance_time_ms(6000);
+  poll();
+
+  // Now the AS finally responds with a 501 (a 5xx error code chosen at random).
+  inject_msg(respond_to_txdata(inv_for_as, 501), &tpAS1);
+
+  // Confirm sprout responds to the error from the AS with an ACK.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("ACK").matches(out);
+  tpAS1.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Check error is not forwarded on, as timeout error has already been sent.
+  ASSERT_EQ(0, txdata_count());
+}
+
+
+// Test that after a 100 Trying is received from an AS, the request isn't timed
+// out after 6 secs (set as the default timeout for an AS when Default
+// Handling is set to Session Terminated) with a 408, and instead a CANCEL is
+// sent after waiting for 3 mins (min timeout for INVITE generating a final
+// response).
+TEST_F(SCSCFTest, TimeoutExtendedByProofOfLife)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session terminated.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0, 1);
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller.
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // INVITE passed on to AS.
+  // Save off the INVITE, as it is needed later on in the test.
+  out = current_txdata()->msg;
+  ReqMatcher r1("INVITE");
+  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
+  pjsip_tx_data* inv_for_as = pop_txdata();
+
+  // AS responds with 100 Trying.
+  inject_msg(respond_to_txdata(inv_for_as, 100), &tpAS1);
+
+  // Advance some time (more than 6s, which is the testbed timout for a session
+  // terminated AS which hasn't sent any response).
+  cwtest_advance_time_ms(6001);
+  poll();
+
+  // Check no timeout has been sent upstream.
+  ASSERT_EQ(0, txdata_count());
+
+  // Advance 3 mins and 1 millisec so that the INVITE will time out.
+  cwtest_advance_time_ms(180001);
+  poll();
+
+  // At this point we should have sent a CANCEL to the AS, as the INVITE has
+  // timed out.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("CANCEL");
+  tpAS1.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Advance time for 32 secs and 1 millisec so that the time period in which we
+  // will wait for a response to a CANCEL has timed out.
+  cwtest_advance_time_ms(32001);
+  poll();
+
+  // At this point we should have sent a 487 error upstream, to show the request
+  // has been terminated with a CANCEL.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(487).matches(out);
+  tpCaller.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Check no other messages pending.
+  poll();
+  ASSERT_EQ(0, txdata_count());
+}
+
+
 TEST_F(SCSCFTest, DefaultHandlingTerminateDisabled)
 {
   // Disable the liveness timer for session terminated ASs.
@@ -3646,7 +4199,7 @@ TEST_F(SCSCFTest, DefaultHandlingTerminateDisabled)
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
 
   // Set up an application server for the caller. It's default handling is set
-  // to session continue.
+  // to session terminate.
   ServiceProfileBuilder service_profile = ServiceProfileBuilder()
     .addIdentity("sip:6505551000@homedomain")
     .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=tcp", 0 , 1);
@@ -3855,6 +4408,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinueNonExistent)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -3883,7 +4437,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinueNonExistent)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -3913,6 +4468,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinueNonResponsive)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -3963,7 +4519,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinueNonResponsive)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -3991,6 +4548,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinueImmediateError)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -4025,7 +4583,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinueImmediateError)
               testing::MatchesRegex("Route: <sip:1\\.2\\.3\\.4:56789;transport=UDP;lr>\r\nRoute: <sip:odi_[+/A-Za-z0-9]+@127.0.0.1:5058;transport=UDP;lr;service=scscf>"));
 
   // ---------- AS1 immediately rejects the request with a 500 response.  This
-  // gets returned to the caller because the 183 indicated the AS is live.
+  // doesn't get returned to the caller, because no 183 has arrived (which would
+  // disable the default handling).
   std::string fresp = respond_to_txdata(current_txdata(), 500);
   inject_msg(fresp, &tpAS1);
   free_txdata();
@@ -4043,7 +4602,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinueImmediateError)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -4074,6 +4634,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinue100ThenError)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -4114,8 +4675,9 @@ TEST_F(SCSCFTest, DefaultHandlingContinue100ThenError)
   string fresp = respond_to_txdata(current_txdata(), 100);
   inject_msg(fresp, &tpAS1);
 
-  // ---------- AS1 now rejects the request with a 500 response.  This gets
-  // returned to the caller because the 183 indicated the AS is live.
+  // ---------- AS1 now rejects the request with a 500 response.  This doesn't
+  // get returned to the caller, because no 183 has arrived (which would disable
+  // the default handling).
   fresp = respond_to_txdata(current_txdata(), 500);
   inject_msg(fresp, &tpAS1);
   free_txdata();
@@ -4132,7 +4694,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinue100ThenError)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -4239,7 +4802,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinue1xxThenError)
 
 
 // Test DefaultHandling=CONTINUE for a responsive AS that passes the INVITE
-// back tot he S-CSCF but then returns an error.
+// back to the S-CSCF but then returns an error.
 TEST_F(SCSCFTest, DefaultHandlingContinueInviteReturnedThenError)
 {
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
@@ -4257,6 +4820,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinueInviteReturnedThenError)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -4322,7 +4886,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinueInviteReturnedThenError)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -4510,7 +5075,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinueDisabled)
   inject_msg(respond_to_txdata(current_txdata(), 200, "", ""), &tpCallee);
   free_txdata();
 
-  // 200 OK received at callee.
+  // 200 OK received at caller.
   poll();
   ASSERT_EQ(1, txdata_count());
   out = current_txdata()->msg;
@@ -4540,6 +5105,7 @@ TEST_F(SCSCFTest, DefaultHandlingMissing)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::UDP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -4568,7 +5134,8 @@ TEST_F(SCSCFTest, DefaultHandlingMissing)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -4596,6 +5163,7 @@ TEST_F(SCSCFTest, DefaultHandlingMalformed)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::UDP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -4624,7 +5192,8 @@ TEST_F(SCSCFTest, DefaultHandlingMalformed)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r2.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -4653,6 +5222,7 @@ TEST_F(SCSCFTest, DefaultHandlingContinueNonExistentRRTest)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -4681,7 +5251,8 @@ TEST_F(SCSCFTest, DefaultHandlingContinueNonExistentRRTest)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
 
   // The S-CSCF should record-route itself for both originating and terminating
   // billing.
@@ -4924,6 +5495,361 @@ TEST_F(SCSCFTest, DefaultHandlingContinueFirstTermAsFailsRRTest)
   stack_data.record_route_on_completion_of_originating = old_rr_on_comp_of_orig;
 }
 
+
+// Test that if AS1 times out, then AS2 rejects an INVITE, the rejection is
+// immediately sent on, without waiting for all retries to AS1 to take place.
+// Then, if AS1 finally responds, check the response is handled.
+TEST_F(SCSCFTest, DefaultHandlingContinueErrorSentImmediately)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session continue.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=TCP")
+    .addIfc(2, {"<Method>INVITE</Method>"}, "sip:4.2.3.4:56788;transport=TCP");
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+  _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
+                              "{\"result-code\": 2001,"
+                              " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
+
+  EXPECT_CALL(*_sess_cont_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpAS2(TransportFlow::Protocol::TCP, stack_data.scscf_port, "4.2.3.4", 56788);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // The INVITE is sent onto AS1 (which will reply very slowly).
+  //
+  // Save off the invite, as it will be needed later.
+  out = current_txdata()->msg;
+  ReqMatcher("INVITE").matches(out);
+  tpAS1.expect_target(current_txdata(), false);
+  pjsip_tx_data* invite_1_tx_data = pop_txdata();
+
+  // Advance time by just over 3s (which is the testbed default time to wait for
+  // a response from a session continued AS).
+  ASSERT_EQ(0, txdata_count());
+  cwtest_advance_time_ms(3001);
+  poll();
+
+  // Expect the INVITE to have now been passed on to AS2.
+  //
+  // Save off the invite, as it will be needed later.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("INVITE").matches(out);
+  tpAS2.expect_target(current_txdata(), false);
+  pjsip_tx_data* invite_2_tx_data = pop_txdata();
+
+  // Send in a 183 Session Progress response from AS2 to indicate it is
+  // processing the request. This will disable the default handling.
+  inject_msg(respond_to_txdata(invite_2_tx_data, 183), &tpAS2);
+  poll();
+
+  // Expect the 183 to be returned to the caller without delay.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(183).matches(out);
+  tpCaller.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // AS2 now rejects the request with a 500 response. This will be returned to
+  // the caller, as the 183 indicated that AS2 was alive.
+  inject_msg(respond_to_txdata(invite_2_tx_data, 500), &tpAS2);
+  ASSERT_EQ(2, txdata_count());
+
+  // Expect an ACK to be sent to AS2.
+  out = current_txdata()->msg;
+  ReqMatcher("ACK").matches(out);
+  tpAS2.expect_target(current_txdata(), false);
+  free_txdata();
+
+  // Expect the 500 to be passed back to the caller without delay.
+  out = current_txdata()->msg;
+  RespMatcher(500).matches(out);
+  tpCaller.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+
+  ASSERT_EQ(0, txdata_count());
+
+  // Now AS1 finally responds with a 100 Trying.
+  inject_msg(respond_to_txdata(invite_1_tx_data, 100), &tpAS1);
+
+  cwtest_advance_time_ms(100);
+  poll();
+
+  // Respond to AS1 with a CANCEL, as an error has already been sent upstream to
+  // the caller.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("CANCEL").matches(out);
+  tpAS1.expect_target(current_txdata(), false);
+  free_txdata();
+
+  ASSERT_EQ(0, txdata_count());
+  pjsip_tx_data_dec_ref(invite_1_tx_data); invite_1_tx_data = NULL;
+  pjsip_tx_data_dec_ref(invite_2_tx_data); invite_2_tx_data = NULL;
+}
+
+
+// Test that if AS1 times out, then AS2 rejects an INVITE, and the rejection is
+// sent upstream, if AS1 then replies with an error, the error is handled.
+TEST_F(SCSCFTest, DefaultHandlingContinueErrorTimeoutThenResp)
+{
+  // Register an endpoint to act as the callee.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for the caller. It's default handling is set
+  // to session continue.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=TCP")
+    .addIfc(2, {"<Method>INVITE</Method>"}, "sip:4.2.3.4:56789;transport=TCP");
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+  _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
+                              "{\"result-code\": 2001,"
+                              " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
+
+  EXPECT_CALL(*_sess_cont_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpCaller(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpAS2(TransportFlow::Protocol::TCP, stack_data.scscf_port, "4.2.3.4", 56789);
+
+  // Caller sends INVITE.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "INVITE";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 Trying goes back to caller.
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  tpCaller.expect_target(current_txdata(), true);  // Requests always come back on same transport
+  msg.convert_routeset(out);
+  free_txdata();
+
+  // The INVITE is sent onto AS1 (which will reply very slowly).
+  //
+  // Save off the invite, as it will be needed later.
+  out = current_txdata()->msg;
+  ReqMatcher("INVITE").matches(out);
+  tpAS1.expect_target(current_txdata(), false);
+  pjsip_tx_data* invite_1_tx_data = pop_txdata();
+
+  // Advance time by just over 3s (which is the testbed default time to wait for
+  // a response from a session continued AS).
+  ASSERT_EQ(0, txdata_count());
+  cwtest_advance_time_ms(3001);
+  poll();
+
+  // Expect the INVITE to have now been passed on to AS2.
+  //
+  // Save off the invite, as it will be needed later.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("INVITE").matches(out);
+  tpAS2.expect_target(current_txdata(), false);
+  pjsip_tx_data* invite_2_tx_data = pop_txdata();
+
+  // Send in a 183 Session Progress response from AS2 to indicate it is
+  // processing the request. This will disable the default handling.
+  inject_msg(respond_to_txdata(invite_2_tx_data, 183), &tpAS2);
+  poll();
+
+  // Expect the 183 to be returned to the caller without delay.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(183).matches(out);
+  tpCaller.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // AS2 now rejects the request with a 500 response. This will be returned to
+  // the caller, as the 183 indicated that AS2 was alive.
+  inject_msg(respond_to_txdata(invite_2_tx_data, 500), &tpAS2);
+  ASSERT_EQ(2, txdata_count());
+
+  // Expect an ACK to be sent to AS2.
+  out = current_txdata()->msg;
+  ReqMatcher("ACK").matches(out);
+  tpAS2.expect_target(current_txdata(), false);
+  free_txdata();
+
+  // Expect the 500 to be passed back to the caller without delay.
+  out = current_txdata()->msg;
+  RespMatcher(500).matches(out);
+  tpCaller.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // Caller ACKs error response.
+  msg._method = "ACK";
+  inject_msg(msg.get_request(), &tpCaller);
+  poll();
+
+  ASSERT_EQ(0, txdata_count());
+
+  // Now AS1 finally responds with a 403 (an error code chosen at random).
+  inject_msg(respond_to_txdata(invite_1_tx_data, 483), &tpAS1);
+
+  // Respond to AS1 with an ACK. Also check the error is not sent upstream, as
+  // an error has already been sent.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("ACK").matches(out);
+  tpAS1.expect_target(current_txdata(), false);
+  free_txdata();
+
+  ASSERT_EQ(0, txdata_count());
+  pjsip_tx_data_dec_ref(invite_1_tx_data); invite_1_tx_data = NULL;
+  pjsip_tx_data_dec_ref(invite_2_tx_data); invite_2_tx_data = NULL;
+}
+
+
+// Test that if AS1 times out, then AS2 rejects an MESSAGE, and the rejection is
+// sent upstream, if AS1 then replies with an error, the error is handled.
+TEST_F(SCSCFTest, DefaultHandlingContinueMessageErrorTimeoutThenResp)
+{
+  // Register an endpoint to act as UE2.
+  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Set up an application server for UE1. It's default handling is set to
+  // session continue.
+  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
+    .addIdentity("sip:6505551000@homedomain")
+    .addIfc(1, {"<Method>MESSAGE</Method>"}, "sip:1.2.3.4:56789;transport=TCP")
+    .addIfc(2, {"<Method>MESSAGE</Method>"}, "sip:4.2.3.4:56789;transport=TCP");
+  SubscriptionBuilder subscription = SubscriptionBuilder()
+    .addServiceProfile(service_profile);
+  _hss_connection->set_impu_result("sip:6505551000@homedomain",
+                                   "call",
+                                   "UNREGISTERED",
+                                   subscription.return_sub());
+  _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
+                              "{\"result-code\": 2001,"
+                              " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
+
+  EXPECT_CALL(*_sess_cont_comm_tracker, on_failure(_, HasSubstr("timeout")));
+
+  TransportFlow tpUE1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
+  TransportFlow tpAS1(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpAS2(TransportFlow::Protocol::TCP, stack_data.scscf_port, "4.2.3.4", 56789);
+
+  // MESSAGE sent from UE1.
+  SCSCFMessage msg;
+  msg._via = "10.99.88.11:12345;transport=TCP";
+  msg._to = "6505551234@homedomain";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  msg._todomain = "";
+  msg._requri = "sip:6505551234@homedomain";
+
+  msg._method = "MESSAGE";
+  inject_msg(msg.get_request(), &tpUE1);
+  poll();
+  ASSERT_EQ(1, txdata_count());
+
+  // The MESSAGE is sent onto AS1 (which will reply very slowly).
+  //
+  // Save off the MESSAGE, as it will be needed later.
+  pjsip_msg* out = current_txdata()->msg;
+  ReqMatcher("MESSAGE").matches(out);
+  tpAS1.expect_target(current_txdata(), false);
+  pjsip_tx_data* message_1_tx_data = pop_txdata();
+
+  // Advance time by just over 3s (which is the testbed default time to wait for
+  // a response from a session continued AS).
+  ASSERT_EQ(0, txdata_count());
+  cwtest_advance_time_ms(3001);
+  poll();
+
+  // Expect the MESSAGE to have now been passed on to AS2.
+  //
+  // Save off the MESSAGE, as it will be needed later.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  ReqMatcher("MESSAGE").matches(out);
+  tpAS2.expect_target(current_txdata(), false);
+  pjsip_tx_data* message_2_tx_data = pop_txdata();
+
+  // Send in a 183 Session Progress response from AS2 to indicate it is
+  // processing the request. This will disable the default handling.
+  inject_msg(respond_to_txdata(message_2_tx_data, 183), &tpAS2);
+  poll();
+
+  // Expect the 183 to be returned to UE1 without delay.
+  ASSERT_EQ(1, txdata_count());
+  out = current_txdata()->msg;
+  RespMatcher(183).matches(out);
+  tpUE1.expect_target(current_txdata(), true);
+  free_txdata();
+
+  // AS2 now rejects the request with a 500 response. This will be returned to
+  // UE1, as the 183 indicated that AS2 was alive.
+  inject_msg(respond_to_txdata(message_2_tx_data, 500), &tpAS2);
+  ASSERT_EQ(1, txdata_count());
+
+  // Expect the 500 to be passed back to UE1 without delay.
+  out = current_txdata()->msg;
+  RespMatcher(500).matches(out);
+  tpUE1.expect_target(current_txdata(), true);
+  free_txdata();
+
+  ASSERT_EQ(0, txdata_count());
+
+  // Now AS1 finally responds with a 403 (an error code chosen at random).
+  inject_msg(respond_to_txdata(message_1_tx_data, 483), &tpAS1);
+
+  // Check the error is not sent upstream, as an error has already been sent.
+  ASSERT_EQ(0, txdata_count());
+  pjsip_tx_data_dec_ref(message_1_tx_data); message_1_tx_data = NULL;
+  pjsip_tx_data_dec_ref(message_2_tx_data); message_2_tx_data = NULL;
+}
+
+
 // Test that when Sprout is configured to Record-Route itself only at
 // the start and end of all processing, it does.
 TEST_F(SCSCFTest, RecordRoutingTest)
@@ -5085,6 +6011,7 @@ void SCSCFTestBase::doAsOriginated(const std::string& msg, bool expect_orig)
   TransportFlow tpAS0(TransportFlow::Protocol::UDP, stack_data.scscf_port, "6.2.3.4", 56786);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
   TransportFlow tpAS2(TransportFlow::Protocol::UDP, stack_data.scscf_port, "5.2.3.4", 56787);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send spontaneous INVITE from AS0.
   inject_msg(msg, &tpAS0);
@@ -5167,7 +6094,8 @@ void SCSCFTestBase::doAsOriginated(const std::string& msg, bool expect_orig)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -5228,7 +6156,6 @@ TEST_F(SCSCFTest, AsOriginatedTerm)
 TEST_F(SCSCFTest, Cdiv)
 {
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
-  register_uri(_sdm, _hss_connection, "6505551000", "homedomain", "sip:wuntootree@10.14.61.213:5061;transport=tcp;ob");
   register_uri(_sdm, _hss_connection, "6505555678", "homedomain", "sip:andunnuvvawun@10.114.61.214:5061;transport=tcp;ob");
   ServiceProfileBuilder service_profile = ServiceProfileBuilder()
     .addIdentity("sip:6505551234@homedomain")
@@ -5248,6 +6175,7 @@ TEST_F(SCSCFTest, Cdiv)
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "5.2.3.4", 56787);
   TransportFlow tpAS2(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpDivertedToCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.214", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -5348,7 +6276,9 @@ TEST_F(SCSCFTest, Cdiv)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, which is the final callee (who the call
+  // was diverted to).
+  tpDivertedToCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:andunnuvvawun@10.114.61.214:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -5362,8 +6292,6 @@ TEST_F(SCSCFTest, Cdiv)
 TEST_F(SCSCFTest, CdivToDifferentDomain)
 {
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
-  register_uri(_sdm, _hss_connection, "6505551000", "homedomain", "sip:wuntootree@10.14.61.213:5061;transport=tcp;ob");
-  register_uri(_sdm, _hss_connection, "6505555678", "homedomain", "sip:andunnuvvawun@10.114.61.214:5061;transport=tcp;ob");
   ServiceProfileBuilder service_profile = ServiceProfileBuilder()
     .addIdentity("sip:6505551234@homedomain")
     .addIfc(2, {"<SessionCase>4</SessionCase><!-- originating-cdiv -->", "<Method>INVITE</Method>"}, "sip:1.2.3.4:56789;transport=UDP")
@@ -5653,6 +6581,7 @@ TEST_F(SCSCFTest, MmtelCdiv)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS2(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpDivertedToCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.214", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -5726,7 +6655,9 @@ TEST_F(SCSCFTest, MmtelCdiv)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, which is the final callee (who the call
+  // was diverted to).
+  tpDivertedToCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:andunnuvvawun@10.114.61.214:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
   EXPECT_THAT(get_headers(out, "History-Info"),
@@ -5814,6 +6745,7 @@ TEST_F(SCSCFTest, MmtelDoubleCdiv)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS2(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpDivertedToCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.214", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -5896,7 +6828,9 @@ TEST_F(SCSCFTest, MmtelDoubleCdiv)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, which is the final callee (who the call
+  // was diverted twice to).
+  tpDivertedToCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:andunnuvvawun@10.114.61.214:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -5944,6 +6878,7 @@ TEST_F(SCSCFTest, MmtelFlow)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "5.2.3.4", 56787);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -6003,7 +6938,8 @@ TEST_F(SCSCFTest, MmtelFlow)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
   EXPECT_EQ("Privacy: id; header; user", get_headers(out, "Privacy"));
@@ -6078,6 +7014,7 @@ TEST_F(SCSCFTest, MmtelThenExternal)
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
   TransportFlow tpAS2(TransportFlow::Protocol::UDP, stack_data.scscf_port, "5.2.3.4", 56787);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -6170,7 +7107,8 @@ TEST_F(SCSCFTest, MmtelThenExternal)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
   EXPECT_EQ("Privacy: id; header; user", get_headers(out, "Privacy"));
@@ -6244,6 +7182,7 @@ TEST_F(SCSCFTest, MultipleMmtelFlow)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "5.2.3.4", 56787);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -6303,7 +7242,8 @@ TEST_F(SCSCFTest, MultipleMmtelFlow)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
   EXPECT_EQ("Privacy: id; header; user", get_headers(out, "Privacy"));
@@ -6502,16 +7442,17 @@ TEST_F(SCSCFTest, TerminatingDiversionExternal)
 }
 
 
-// Test originating AS handling for request to external URI.
+// Test originating AS handling for request to external URI.  Check that
+// originating "user=phone" SIP URIs are looked up using the equivalent Tel URI
 TEST_F(SCSCFTest, OriginatingExternal)
 {
   register_uri(_sdm, _hss_connection, "6505501234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
   ServiceProfileBuilder service_profile = ServiceProfileBuilder()
-    .addIdentity("sip:6505551000@homedomain")
+    .addIdentity("tel:6505551000")
     .addIfc(1, {"<Method>INVITE</Method>", "<SessionCase>0</SessionCase><!-- originating-registered -->"}, "sip:1.2.3.4:56789;transport=UDP");
   SubscriptionBuilder subscription = SubscriptionBuilder()
     .addServiceProfile(service_profile);
-  _hss_connection->set_impu_result("sip:6505551000@homedomain", "call", RegDataXMLUtils::STATE_REGISTERED, subscription.return_sub());
+  _hss_connection->set_impu_result("tel:6505551000", "call", RegDataXMLUtils::STATE_REGISTERED, subscription.return_sub());
   _hss_connection->set_impu_result("sip:6505501234@homedomain", "call", RegDataXMLUtils::STATE_REGISTERED, "");
 
   add_host_mapping("ut.cw-ngv.com", "10.9.8.7");
@@ -6524,6 +7465,7 @@ TEST_F(SCSCFTest, OriginatingExternal)
   SCSCFMessage msg;
   msg._via = "10.99.88.11:12345";
   msg._to = "6505501234@ut.cw-ngv.com";
+  msg._extra = "P-Asserted-Identity: Andy <sip:6505551000@homedomain;user=phone>";
   msg._todomain = "";
   msg._route = "Route: <sip:sprout.homedomain;orig>";
   msg._requri = "sip:6505501234@ut.cw-ngv.com";
@@ -6550,7 +7492,7 @@ TEST_F(SCSCFTest, OriginatingExternal)
   EXPECT_THAT(get_headers(out, "Route"),
               testing::MatchesRegex("Route: <sip:1\\.2\\.3\\.4:56789;transport=UDP;lr>\r\nRoute: <sip:odi_[+/A-Za-z0-9]+@127.0.0.1:5058;transport=UDP;lr;orig;service=scscf>"));
   EXPECT_THAT(get_headers(out, "P-Served-User"),
-              testing::MatchesRegex("P-Served-User: <sip:6505551000@homedomain>;sescase=orig;regstate=reg"));
+              testing::MatchesRegex("P-Served-User: <tel:6505551000>;sescase=orig;regstate=reg"));
 
   // ---------- AS1 sends a 100 Trying to indicate it has received the request.
   string fresp1 = respond_to_txdata(current_txdata(), 100);
@@ -6623,10 +7565,35 @@ TEST_F(SCSCFTest, OriginatingExternal)
   msg.convert_routeset(out);
   free_txdata();
 
+  // Finally, clear enforce_user_phone without setting user=phone on the PAI and check that the attempt to resend the INVITE
+  // fails (it will attempt the lookup on the SIP URI, not the equivalent Tel URI).  We only do coercion if user=phone
+  // is present, regardless of enforce_user_phone.
+  URIClassifier::enforce_user_phone = false;
+
+  SCSCFMessage msg2;
+  msg2._via = "10.99.88.11:12345";
+  msg2._to = "6505501234@ut.cw-ngv.com";
+  msg2._extra = "P-Asserted-Identity: Andy <sip:6505551000@homedomain>";
+  msg2._todomain = "";
+  msg2._route = "Route: <sip:sprout.homedomain;orig>";
+  msg2._requri = "sip:6505501234@ut.cw-ngv.com";
+  msg2._method = "INVITE";
+  inject_msg(msg2.get_request(), &tpBono);
+  poll();
+  ASSERT_EQ(2, txdata_count());
+
+  // 100 and 404 go back to bono
+  out = current_txdata()->msg;
+  RespMatcher(100).matches(out);
+  free_txdata();
+
+  out = current_txdata()->msg;
+  RespMatcher(404).matches(out);
+  free_txdata();
+
   EXPECT_EQ(1, ((SNMP::FakeEventAccumulatorTable*)_scscf_sproutlet->_audio_session_setup_time_tbl)->_count);
   EXPECT_EQ(0, ((SNMP::FakeEventAccumulatorTable*)_scscf_sproutlet->_video_session_setup_time_tbl)->_count);
 }
-
 
 // Test local call with both originating and terminating ASs.
 TEST_F(SCSCFTest, OriginatingTerminatingAS)
@@ -6658,6 +7625,7 @@ TEST_F(SCSCFTest, OriginatingTerminatingAS)
 
   TransportFlow tpBono(TransportFlow::Protocol::UDP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::UDP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -6778,7 +7746,8 @@ TEST_F(SCSCFTest, OriginatingTerminatingAS)
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to terminating UE (callee).
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -6846,6 +7815,7 @@ TEST_F(SCSCFTest, OriginatingTerminatingASTimeout)
 {
   TransportFlow tpBono(TransportFlow::Protocol::UDP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
 
@@ -6982,7 +7952,9 @@ TEST_F(SCSCFTest, OriginatingTerminatingASTimeout)
   SCOPED_TRACE("INVITE (2)");
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
-  tpBono.expect_target(current_txdata(), false);
+
+  // INVITE passed to terminating UE (callee).
+  tpCallee.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -7115,6 +8087,7 @@ TEST_F(SCSCFTest, OriginatingTerminatingMessageASTimeout)
 {
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS(TransportFlow::Protocol::TCP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpUE2(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
 
@@ -7237,11 +8210,13 @@ TEST_F(SCSCFTest, OriginatingTerminatingMessageASTimeout)
   inject_msg(out, &tpAS);
   pjsip_tx_data_dec_ref(message_txdata);
 
-  // MESSAGE passed to terminating UE
+  // MESSAGE passed to terminating UE.
   ASSERT_EQ(1, txdata_count());
   out = current_txdata()->msg;
   ASSERT_NO_FATAL_FAILURE(r1.matches(out));
-  tpBono.expect_target(current_txdata(), false);
+
+  // MESSAGE passed to terminating UE (UE2).
+  tpUE2.expect_target(current_txdata(), false);
   EXPECT_EQ("sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob", r1.uri());
   EXPECT_EQ("", get_headers(out, "Route"));
 
@@ -8647,7 +9622,7 @@ TEST_F(SCSCFTest, TestAddStoredPathHeader)
   binding->_emergency_registration = false;
   AssociatedURIs associated_uris = {};
   associated_uris.add_uri(uri, false);
-  bool ret = _sdm->set_aor_data(uri, aor, 0);
+  bool ret = _sdm->set_aor_data(uri, SubscriberDataManager::EventTrigger::USER, aor, 0);
   delete aor;
   EXPECT_TRUE(ret);
 
@@ -8678,7 +9653,7 @@ TEST_F(SCSCFTest, TestAddStoredPathURI)
   binding->_emergency_registration = false;
   AssociatedURIs associated_uris = {};
   associated_uris.add_uri(uri, false);
-  bool ret = _sdm->set_aor_data(uri, aor, 0);
+  bool ret = _sdm->set_aor_data(uri, SubscriberDataManager::EventTrigger::USER, aor, 0);
   delete aor;
   EXPECT_TRUE(ret);
 
@@ -8710,6 +9685,7 @@ TEST_F(SCSCFTest, TestCallerNotBarred)
   _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
                               "{\"result-code\": 2001,"
                               " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
+
   SCSCFMessage msg;
   msg._route = "Route: <sip:sprout.homedomain;orig>";
   list<HeaderMatcher> hdrs;
@@ -8736,6 +9712,7 @@ TEST_F(SCSCFTest, TestCalleeNotBarred)
                                    "call",
                                    "REGISTERED",
                                    subscription.return_sub());
+
   SCSCFMessage msg;
   list<HeaderMatcher> hdrs;
   doSuccessfulFlow(msg, testing::MatchesRegex(".*wuntootreefower.*"), hdrs);
@@ -8779,6 +9756,7 @@ TEST_F(SCSCFTest, TestEmergencyMultipleBindings)
                                    "call",
                                    "REGISTERED",
                                    subscription.return_sub());
+
   SCSCFMessage msg;
   list<HeaderMatcher> hdrs;
   doSuccessfulFlow(msg, testing::MatchesRegex(".*wuntootreefower.*"), hdrs);
@@ -8884,6 +9862,7 @@ TEST_F(SCSCFTest, NoMatchingStandardiFCsUseFallbackiFCs)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.5", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -8961,7 +9940,8 @@ TEST_F(SCSCFTest, NoMatchingStandardiFCsUseFallbackiFCs)
   ReqMatcher r3("INVITE");
   ASSERT_NO_FATAL_FAILURE(r3.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
 
   // Target sends back 100 Trying
   inject_msg(respond_to_txdata(current_txdata(), 100), &tpBono);
@@ -8994,6 +9974,7 @@ TEST_F(SCSCFTest, NoStandardiFCsUseFallbackiFCs)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.5", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -9071,7 +10052,8 @@ TEST_F(SCSCFTest, NoStandardiFCsUseFallbackiFCs)
   ReqMatcher r3("INVITE");
   ASSERT_NO_FATAL_FAILURE(r3.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
 
   // Target sends back 100 Trying
   inject_msg(respond_to_txdata(current_txdata(), 100), &tpBono);
@@ -9150,6 +10132,7 @@ TEST_F(SCSCFTest, MixedRealAndDummyApplicationServer)
 
   TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
   TransportFlow tpAS1(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.2.3.4", 56789);
+  TransportFlow tpCallee(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.114.61.213", 5061);
 
   // ---------- Send INVITE
   // We're within the trust boundary, so no stripping should occur.
@@ -9202,308 +10185,8 @@ TEST_F(SCSCFTest, MixedRealAndDummyApplicationServer)
   ReqMatcher r2("INVITE");
   ASSERT_NO_FATAL_FAILURE(r2.matches(out));
 
-  tpBono.expect_target(current_txdata(), false);
-
-  // Target sends back 100 Trying
-  inject_msg(respond_to_txdata(current_txdata(), 100), &tpBono);
-  pjsip_tx_data* txdata = pop_txdata();
-
-  // Send a 200 ringing back down the chain to finish the transaction. This is a
-  // more realistic test of AS communication tracking.
-  send_response_back_through_dialog(respond_to_txdata(txdata, 200), 200, 2);
-  pjsip_tx_data_dec_ref(txdata); txdata = NULL;
-}
-
-
-// These MMF tests are essentially the MixedRealAndDummyApplicationServer test,
-// but with simulated MMF processing between the SCSCF and the AS
-TEST_F(SCSCFTest, MMFPreAs)
-{
-  TRC_DEBUG("TEst");
-  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
-  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
-    .addIdentity("sip:6505551000@homedomain")
-    .addIfc(0, {"<Method>INVITE</Method>"}, "sip:DUMMY_AS")
-    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:pre.as.only.mmf.test.server:56789;transport=UDP")
-    .addIfc(2, {"<Method>INVITE</Method>"}, "sip:DUMMY_AS");
-  SubscriptionBuilder subscription = SubscriptionBuilder()
-    .addServiceProfile(service_profile);
-  _hss_connection->set_impu_result("sip:6505551000@homedomain",
-                                   "call",
-                                   "UNREGISTERED",
-                                   subscription.return_sub());
-  _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
-                              "{\"result-code\": 2001,"
-                              " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
-
-  TransportFlow tpMMFpreAS(TransportFlow::Protocol::TCP, stack_data.scscf_port, "11.22.33.44", 5060);
-  TransportFlow tpAS(TransportFlow::Protocol::UDP, stack_data.scscf_port, "pre.as.only.mmf.test.server", 56789);
-  TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
-
-  // Send the INVITE
-  SCSCFMessage msg;
-  msg._to = "6505551234@homedomain";
-  msg._route = "Route: <sip:sprout.homedomain;orig>";
-  msg._todomain = "";
-  msg._requri = "sip:6505551234@homedomain";
-
-  msg._method = "INVITE";
-  TRC_DEBUG("inject");
-  inject_msg(msg.get_request(), &tpBono);
-  poll();
-  ASSERT_EQ(2, txdata_count());
-
-  // 100 Trying goes back to bono
-  pjsip_msg* out = current_txdata()->msg;
-  RespMatcher(100).matches(out);
-  msg.convert_routeset(out);
-  free_txdata();
-
-  // INVITE passed on to MMF
-  out = current_txdata()->msg;
-  ReqMatcher r1("INVITE");
-  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
-  tpMMFpreAS.expect_target(current_txdata(), false);
-
-  // MMF sends a 100 Trying
-  string fresp = respond_to_txdata(current_txdata(), 100);
-  inject_msg(fresp, &tpMMFpreAS);
-
-  const pj_str_t STR_ROUTE = pj_str("Route");
-
-  // Ensure the pre-as header was added as expected, and remove it
-  pjsip_hdr* preas_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string preas_uri = PJUtils::get_header_value(preas_hdr);
-  EXPECT_THAT(preas_uri, MatchesRegex(".*sip:11.22.33.44.*"));
-  EXPECT_THAT(preas_uri, MatchesRegex(".*mmfscope=pre-as.*"));
-  EXPECT_THAT(preas_uri, MatchesRegex(".*mmftarget=PreASOnly.*"));
-  pj_list_erase(preas_hdr);
-
-  // Ensure the AS header was added as expected, and remove it
-  pjsip_hdr* as_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string as_uri = PJUtils::get_header_value(as_hdr);
-  EXPECT_THAT(as_uri, MatchesRegex(".*pre.as.only.mmf.test.server:56789.*"));
-  pj_list_erase(as_hdr);
-
-  // We have removed route headers to simulate the request being routed from
-  // the MMF server to the AS.
-  // Simulate the request being routed from the AS back to the SCSCF
-  inject_msg(out, &tpAS);
-  free_txdata();
-
-  // 100 Trying goes back to the AS
-  out = current_txdata()->msg;
-  RespMatcher(100).matches(out);
-  msg.convert_routeset(out);
-  free_txdata();
-
-  // INVITE passed on to final destination
-  out = current_txdata()->msg;
-  ReqMatcher r2("INVITE");
-  ASSERT_NO_FATAL_FAILURE(r2.matches(out));
-
-  tpBono.expect_target(current_txdata(), false);
-
-  // Target sends back 100 Trying
-  inject_msg(respond_to_txdata(current_txdata(), 100), &tpBono);
-  pjsip_tx_data* txdata = pop_txdata();
-
-  // Send a 200 ringing back down the chain to finish the transaction. This is a
-  // more realistic test of AS communication tracking.
-  send_response_back_through_dialog(respond_to_txdata(txdata, 200), 200, 2);
-  pjsip_tx_data_dec_ref(txdata); txdata = NULL;
-}
-
-
-TEST_F(SCSCFTest, MMFPostAs)
-{
-  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
-  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
-    .addIdentity("sip:6505551000@homedomain")
-    .addIfc(0, {"<Method>INVITE</Method>"}, "sip:DUMMY_AS")
-    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:1.5.8.1:56789;transport=UDP")
-    .addIfc(2, {"<Method>INVITE</Method>"}, "sip:DUMMY_AS");
-  SubscriptionBuilder subscription = SubscriptionBuilder()
-    .addServiceProfile(service_profile);
-  _hss_connection->set_impu_result("sip:6505551000@homedomain",
-                                   "call",
-                                   "UNREGISTERED",
-                                   subscription.return_sub());
-  _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
-                              "{\"result-code\": 2001,"
-                              " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
-
-  TransportFlow tpMMFpostAS(TransportFlow::Protocol::TCP, stack_data.scscf_port, "44.33.22.11", 5053);
-  TransportFlow tpAS(TransportFlow::Protocol::UDP, stack_data.scscf_port, "1.5.8.1", 56789);
-  TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
-
-  // Send the INVITE
-  SCSCFMessage msg;
-  msg._to = "6505551234@homedomain";
-  msg._route = "Route: <sip:sprout.homedomain;orig>";
-  msg._todomain = "";
-  msg._requri = "sip:6505551234@homedomain";
-
-  msg._method = "INVITE";
-  inject_msg(msg.get_request(), &tpBono);
-  poll();
-  ASSERT_EQ(2, txdata_count());
-
-  // 100 Trying goes back to bono
-  pjsip_msg* out = current_txdata()->msg;
-  RespMatcher(100).matches(out);
-  msg.convert_routeset(out);
-  free_txdata();
-
-  // INVITE passed on to AS
-  out = current_txdata()->msg;
-  ReqMatcher r1("INVITE");
-  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
-  tpAS.expect_target(current_txdata(), false);
-
-  // AS sends a 100 Trying
-  string fresp = respond_to_txdata(current_txdata(), 100);
-  inject_msg(fresp, &tpAS);
-
-  const pj_str_t STR_ROUTE = pj_str("Route");
-
-  // Ensure the AS header was added as expected, and remove it
-  pjsip_hdr* as_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string as_uri = PJUtils::get_header_value(as_hdr);
-  EXPECT_THAT(as_uri, MatchesRegex(".*1.5.8.1:56789.*"));
-  pj_list_erase(as_hdr);
-
-  // Ensure the post-as header was added as expected, and remove it
-  pjsip_hdr* postas_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string postas_uri = PJUtils::get_header_value(postas_hdr);
-  EXPECT_THAT(postas_uri, MatchesRegex(".*sip:44.33.22.11:5053.*"));
-  EXPECT_THAT(postas_uri, MatchesRegex(".*mmfscope=post-as.*"));
-  EXPECT_THAT(postas_uri, MatchesRegex(".*mmftarget=PostASOnly.*"));
-  pj_list_erase(postas_hdr);
-
-  // We have removed route headers to simulate the request being routed to the
-  // AS, and then routed from the AS to our MMF server.
-  // Simulate the request being routed from the MMF server back to the SCSCF
-  inject_msg(out, &tpMMFpostAS);
-  free_txdata();
-
-  // 100 Trying goes back to MMF
-  out = current_txdata()->msg;
-  RespMatcher(100).matches(out);
-  msg.convert_routeset(out);
-  free_txdata();
-
-  // INVITE passed on to final destination
-  out = current_txdata()->msg;
-  ReqMatcher r2("INVITE");
-  ASSERT_NO_FATAL_FAILURE(r2.matches(out));
-
-  tpBono.expect_target(current_txdata(), false);
-
-  // Target sends back 100 Trying
-  inject_msg(respond_to_txdata(current_txdata(), 100), &tpBono);
-  pjsip_tx_data* txdata = pop_txdata();
-
-  // Send a 200 ringing back down the chain to finish the transaction. This is a
-  // more realistic test of AS communication tracking.
-  send_response_back_through_dialog(respond_to_txdata(txdata, 200), 200, 2);
-  pjsip_tx_data_dec_ref(txdata); txdata = NULL;
-}
-
-
-TEST_F(SCSCFTest, MMFPreAndPostAs)
-{
-  register_uri(_sdm, _hss_connection, "6505551234", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
-  ServiceProfileBuilder service_profile = ServiceProfileBuilder()
-    .addIdentity("sip:6505551000@homedomain")
-    .addIfc(0, {"<Method>INVITE</Method>"}, "sip:DUMMY_AS")
-    .addIfc(1, {"<Method>INVITE</Method>"}, "sip:preandpost.mmf.test.server:56789;transport=UDP")
-    .addIfc(2, {"<Method>INVITE</Method>"}, "sip:DUMMY_AS");
-  SubscriptionBuilder subscription = SubscriptionBuilder()
-    .addServiceProfile(service_profile);
-  _hss_connection->set_impu_result("sip:6505551000@homedomain",
-                                   "call",
-                                   "UNREGISTERED",
-                                   subscription.return_sub());
-  _hss_connection->set_result("/impu/sip%3A6505551234%40homedomain/location",
-                              "{\"result-code\": 2001,"
-                              " \"scscf\": \"sip:scscf.sprout.homedomain:5058;transport=TCP\"}");
-
-  TransportFlow tpMMFpreAS(TransportFlow::Protocol::TCP, stack_data.scscf_port, "11.22.33.44", 5050);
-  TransportFlow tpMMFpostAS(TransportFlow::Protocol::TCP, stack_data.scscf_port, "44.33.22.11", 5053);
-  TransportFlow tpBono(TransportFlow::Protocol::TCP, stack_data.scscf_port, "10.99.88.11", 12345);
-
-  // Send the INVITE
-  SCSCFMessage msg;
-  msg._to = "6505551234@homedomain";
-  msg._route = "Route: <sip:sprout.homedomain;orig>";
-  msg._todomain = "";
-  msg._requri = "sip:6505551234@homedomain";
-
-  msg._method = "INVITE";
-  inject_msg(msg.get_request(), &tpBono);
-  poll();
-  ASSERT_EQ(2, txdata_count());
-
-  // 100 Trying goes back to bono
-  pjsip_msg* out = current_txdata()->msg;
-  RespMatcher(100).matches(out);
-  msg.convert_routeset(out);
-  free_txdata();
-
-  // INVITE passed on to MMF
-  out = current_txdata()->msg;
-  ReqMatcher r1("INVITE");
-  ASSERT_NO_FATAL_FAILURE(r1.matches(out));
-  tpMMFpreAS.expect_target(current_txdata(), false);
-
-  // MMF sends a 100 Trying
-  string fresp = respond_to_txdata(current_txdata(), 100);
-  inject_msg(fresp, &tpMMFpreAS);
-
-  const pj_str_t STR_ROUTE = pj_str("Route");
-
-  // Ensure the pre-as header was added as expected
-  pjsip_hdr* preas_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string preas_uri = PJUtils::get_header_value(preas_hdr);
-  //
-  EXPECT_THAT(preas_uri, MatchesRegex(".*sip:11.22.33.44.*"));
-  EXPECT_THAT(preas_uri, MatchesRegex(".*mmfscope=pre-as.*"));
-  EXPECT_THAT(preas_uri, MatchesRegex(".*mmftarget=BothPreAndPost.*"));
-  pj_list_erase(preas_hdr);
-
-  // Ensure the AS header was added as expected, and remove it
-  pjsip_hdr* as_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string as_uri = PJUtils::get_header_value(as_hdr);
-  EXPECT_THAT(as_uri, MatchesRegex(".*preandpost.mmf.test.server:56789.*"));
-  pj_list_erase(as_hdr);
-
-  // Ensure the post-as header was added as expected, and remove it
-  pjsip_hdr* postas_hdr = (pjsip_hdr*)pjsip_msg_find_hdr_by_name(out, &STR_ROUTE, NULL);
-  std::string postas_uri = PJUtils::get_header_value(postas_hdr);
-  EXPECT_THAT(postas_uri, MatchesRegex(".*sip:44.33.22.11:5053.*"));
-  EXPECT_THAT(postas_uri, MatchesRegex(".*mmfscope=post-as.*"));
-  EXPECT_THAT(postas_uri, MatchesRegex(".*mmftarget=BothPreAndPost.*"));
-  pj_list_erase(postas_hdr);
-
-  // We have removed route headers to simulate the request being routed from
-  // the MMF server to the AS, then routed from the AS back to our MMF server.
-  // Simulate the request being routed from the MMF server back to the SCSCF
-  inject_msg(out, &tpMMFpostAS);
-  free_txdata();
-
-  // 100 Trying goes back to MMF
-  out = current_txdata()->msg;
-  RespMatcher(100).matches(out);
-  msg.convert_routeset(out);
-  free_txdata();
-
-  // INVITE passed on to final destination
-  out = current_txdata()->msg;
-  ReqMatcher r2("INVITE");
-  ASSERT_NO_FATAL_FAILURE(r2.matches(out));
-
-  tpBono.expect_target(current_txdata(), false);
+  // INVITE passed to final destination, so to callee.
+  tpCallee.expect_target(current_txdata(), false);
 
   // Target sends back 100 Trying
   inject_msg(respond_to_txdata(current_txdata(), 100), &tpBono);
@@ -9574,6 +10257,98 @@ TEST_F(SCSCFTest, SCSCFHandlesUrnUri)
   free_txdata();
 }
 
+TEST_F(SCSCFTest, SCSCFHandlesInvalidUri)
+{
+  // Tests that if the SCSCF receives an originating request with an unrouteable
+  // URI after originating processing has finished, it rejects it with a 400
+  SCOPED_TRACE("");
+  register_uri(_sdm, _hss_connection, "6505551000", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Create a MESSAGE containing the req-URI "urn:service:sos".
+  SCSCFMessage msg;
+  msg._method = "MESSAGE";
+  msg._requri = "urn:service:sos";
+  msg._full_to_header = "To: <urn:service:sos>";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  std::string p_asserted_id = "P-Asserted-Identity: <sip:";
+  p_asserted_id.append(msg._from).append("@").append(msg._fromdomain).append(">");
+  msg._extra = p_asserted_id;
+
+  // Send the MESSAGE into the S-CSCF.
+  SCOPED_TRACE("MESSAGE");
+  inject_msg(msg.get_request(), _tp_default);
+  poll();
+
+  // Check that we get a 400 error
+  ASSERT_EQ(1, txdata_count());
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(400).matches(out);
+  _tp_default->expect_target(current_txdata(), true);
+  free_txdata();
+}
+
+TEST_F(SCSCFTest, SCSCFHandlesInvalidUriWithoutEnum)
+{
+  // Tests that if the SCSCF without ENUM configured receives an originating
+  // request with an unrouteable URI after originating processing has finished,
+  // it rejects it with a 400
+  SCOPED_TRACE("");
+  register_uri(_sdm, _hss_connection, "6505551000", "homedomain", "sip:wuntootreefower@10.114.61.213:5061;transport=tcp;ob");
+
+  // Disable ENUM
+  _scscf_sproutlet->_enum_service = NULL;
+
+  // Create a MESSAGE containing the req-URI "urn:service:sos".
+  SCSCFMessage msg;
+  msg._method = "MESSAGE";
+  msg._requri = "urn:service:sos";
+  msg._full_to_header = "To: <urn:service:sos>";
+  msg._route = "Route: <sip:sprout.homedomain;orig>";
+  std::string p_asserted_id = "P-Asserted-Identity: <sip:";
+  p_asserted_id.append(msg._from).append("@").append(msg._fromdomain).append(">");
+  msg._extra = p_asserted_id;
+
+  // Send the MESSAGE into the S-CSCF.
+  SCOPED_TRACE("MESSAGE");
+  inject_msg(msg.get_request(), _tp_default);
+  poll();
+
+  // Check that we get a 400 error
+  ASSERT_EQ(1, txdata_count());
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(400).matches(out);
+  _tp_default->expect_target(current_txdata(), true);
+  free_txdata();
+}
+
+TEST_F(SCSCFTest, SCSCFHandlesInvalidUriTerm)
+{
+  // Tests that if the SCSCF receives a terminating request with an unrouteable
+  // URI as the next hop, it rejects it with a 400
+  SCOPED_TRACE("");
+
+  // Create a MESSAGE containing the URI "urn:service:sos".
+  SCSCFMessage msg;
+  msg._method = "MESSAGE";
+  msg._requri = "urn:service:sos";
+  msg._full_to_header = "To: <urn:service:sos>";
+  msg._route = "Route: <sip:sprout.homedomain>";
+  std::string p_asserted_id = "P-Asserted-Identity: <sip:";
+  p_asserted_id.append(msg._from).append("@").append(msg._fromdomain).append(">");
+  msg._extra = p_asserted_id;
+
+  // Send the MESSAGE into the S-CSCF.
+  SCOPED_TRACE("MESSAGE");
+  inject_msg(msg.get_request(), _tp_default);
+  poll();
+
+  // Check that we get a 400 error
+  ASSERT_EQ(1, txdata_count());
+  pjsip_msg* out = current_txdata()->msg;
+  RespMatcher(400).matches(out);
+  _tp_default->expect_target(current_txdata(), true);
+  free_txdata();
+}
 
 class SCSCFTestWithoutICSCF : public SCSCFTestBase
 {
@@ -9596,8 +10371,6 @@ class SCSCFTestWithoutICSCF : public SCSCFTestBase
                                           "sip:127.0.0.1:5058",
                                           "",
                                           "sip:bgcf@homedomain:5058",
-                                          "sip:11.22.33.44;service=mmf",
-                                          "sip:44.33.22.11:5053;service=mmf",
                                           5058,
                                           "sip:scscf.sprout.homedomain:5058;transport=TCP",
                                           "scscf",
@@ -9610,7 +10383,6 @@ class SCSCFTestWithoutICSCF : public SCSCFTestBase
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
                                           false,
-                                          _mmf_service,
                                           _fifc_service,
                                           ifc_configuration,
                                           3000, // Session continue timeout - different from default
@@ -9635,7 +10407,8 @@ class SCSCFTestWithoutICSCF : public SCSCFTestBase
                                           _enum_service,
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
-                                          false
+                                          false,
+                                          5059
                                           );
     _icscf_sproutlet->init();
 
@@ -9708,8 +10481,6 @@ class SCSCFTestWithRemoteSDM : public SCSCFTestBase
                                           "sip:127.0.0.1:5058",
                                           "sip:icscf.sprout.homedomain:5059;transport=TCP",
                                           "sip:bgcf@homedomain:5058",
-                                          "sip:11.22.33.44;service=mmf",
-                                          "sip:44.33.22.11:5053;service=mmf",
                                           5058,
                                           "sip:scscf.sprout.homedomain:5058;transport=TCP",
                                           "scscf",
@@ -9722,7 +10493,6 @@ class SCSCFTestWithRemoteSDM : public SCSCFTestBase
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
                                           false,
-                                          _mmf_service,
                                           _fifc_service,
                                           ifc_configuration,
                                           3000, // Session continue timeout - different from default
@@ -9747,7 +10517,8 @@ class SCSCFTestWithRemoteSDM : public SCSCFTestBase
                                           _enum_service,
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
-                                          false
+                                          false,
+                                          5059
                                           );
     _icscf_sproutlet->init();
 
@@ -9842,8 +10613,6 @@ class SCSCFTestWithRalf : public SCSCFTestBase
                                           "sip:127.0.0.1:5058",
                                           "sip:icscf.sprout.homedomain:5059;transport=TCP",
                                           "sip:bgcf@homedomain:5058",
-                                          "sip:11.22.33.44;service=mmf",
-                                          "sip:44.33.22.11:5053;service=mmf",
                                           5058,
                                           "sip:scscf.sprout.homedomain:5058;transport=TCP",
                                           "scscf",
@@ -9856,7 +10625,6 @@ class SCSCFTestWithRalf : public SCSCFTestBase
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
                                           false,
-                                          _mmf_service,
                                           _fifc_service,
                                           ifc_configuration,
                                           3000, // Session continue timeout - different from default
@@ -9881,7 +10649,8 @@ class SCSCFTestWithRalf : public SCSCFTestBase
                                           _enum_service,
                                           &SNMP::FAKE_INCOMING_SIP_TRANSACTIONS_TABLE,
                                           &SNMP::FAKE_OUTGOING_SIP_TRANSACTIONS_TABLE,
-                                          false
+                                          false,
+                                          5059
                                           );
     _icscf_sproutlet->init();
 

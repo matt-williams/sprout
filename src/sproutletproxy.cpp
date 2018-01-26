@@ -482,18 +482,29 @@ bool SproutletProxy::is_uri_local(const pjsip_uri* uri)
   //LCOV_EXCL_STOP
 }
 
-pjsip_sip_uri* SproutletProxy::get_routing_uri(const pjsip_msg* req) const
+pjsip_sip_uri* SproutletProxy::get_routing_uri(const pjsip_msg* req,
+                                               const Sproutlet* sproutlet) const
 {
+  // Get the URI that caused us to be routed to this Sproutlet or if no such
+  // URI exists e.g. if the Sproutlet was matched on a port, return NULL.
   const pjsip_route_hdr* route = (pjsip_route_hdr*)
-                                    pjsip_msg_find_hdr(req, PJSIP_H_ROUTE, NULL);;
-  pjsip_sip_uri* routing_uri;
+                                    pjsip_msg_find_hdr(req, PJSIP_H_ROUTE, NULL);
+  pjsip_sip_uri* routing_uri = NULL;
   if (route != NULL)
   {
-    routing_uri = (pjsip_sip_uri*)route->name_addr.uri;
+    if ((PJSIP_URI_SCHEME_IS_SIP(route->name_addr.uri)) &&
+        (is_uri_reflexive(route->name_addr.uri, sproutlet)))
+    {
+      routing_uri = (pjsip_sip_uri*)route->name_addr.uri;
+    }
   }
   else
   {
-    routing_uri = (pjsip_sip_uri*)req->line.req.uri; // LCOV_EXCL_LINE
+    if ((PJSIP_URI_SCHEME_IS_SIP(req->line.req.uri)) &&
+        (is_uri_reflexive(req->line.req.uri, sproutlet)))
+    {
+      routing_uri = (pjsip_sip_uri*)req->line.req.uri;
+    }
   }
 
   return routing_uri;
@@ -542,8 +553,7 @@ bool SproutletProxy::is_host_local(const pj_str_t* host) const
 }
 
 bool SproutletProxy::is_uri_reflexive(const pjsip_uri* uri,
-                                      Sproutlet* sproutlet,
-                                      SAS::TrailId trail)
+                                      const Sproutlet* sproutlet) const
 {
   std::string alias_unused;
   std::string local_hostname_unused;
@@ -593,6 +603,42 @@ bool SproutletProxy::timer_running(pj_timer_entry* tentry)
 }
 
 
+std::atomic_int SproutletProxy::UASTsx::_num_instances(0);
+
+SproutletProxy::UASTsx::TimerCallback::TimerCallback(pj_timer_entry* timer) :
+  _timer_entry(timer)
+{
+}
+
+void SproutletProxy::UASTsx::TimerCallback::run()
+{
+  ((TimerCallbackData*)_timer_entry->user_data)->uas_tsx->process_timer_pop(_timer_entry);
+}
+
+SproutletProxy::UASTsx::Callback::Callback(UASTsx* tsx, std::function<void()> run_fn) :
+  _tsx(tsx),
+  _run_fn(run_fn)
+{
+  // Whenever we create a Callback we expect it to be run, so increase the count
+  // of _pending_callbacks on the UASTsx
+  _tsx->_pending_callbacks++;
+}
+
+void SproutletProxy::UASTsx::Callback::run()
+{
+  _tsx->enter_context();
+
+  // Now that we are running a Callback, we can decrement the count of pending
+  // callbacks
+  _tsx->_pending_callbacks--;
+
+  // _run_fn() contains that actual work that we need to do for this Callback
+  _run_fn();
+
+  _tsx->exit_context();
+}
+
+
 SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
   BasicProxy::UASTsx(proxy),
   _root(NULL),
@@ -604,7 +650,9 @@ SproutletProxy::UASTsx::UASTsx(SproutletProxy* proxy) :
   _timers(),
   _pending_timers()
 {
-  TRC_VERBOSE("Sproutlet Proxy transaction (%p) created", this);
+  int instances = ++_num_instances;
+  TRC_DEBUG("Sproutlet Proxy transaction (%p) created. There are now %d instances",
+            this, instances);
 }
 
 
@@ -614,7 +662,7 @@ SproutletProxy::UASTsx::~UASTsx()
        timer != _timers.end();
        ++timer)
   {
-    SproutletTimerCallbackData* tdata = (SproutletTimerCallbackData*)(*timer)->user_data;
+    TimerCallbackData* tdata = (TimerCallbackData*)(*timer)->user_data;
     delete tdata;
     delete *timer;
   }
@@ -635,7 +683,9 @@ SproutletProxy::UASTsx::~UASTsx()
     SAS::report_marker(flush);
   }
 
-  TRC_VERBOSE("Sproutlet Proxy transaction (%p) destroyed", this);
+  int instances = --_num_instances;
+  TRC_DEBUG("Sproutlet Proxy transaction (%p) destroyed. There are now %d instances",
+            this, instances);
 }
 
 
@@ -685,7 +735,7 @@ pj_status_t SproutletProxy::UASTsx::init(pjsip_rx_data* rdata)
                                    alias,
                                    _req,
                                    _original_transport,
-                                   "EXTERNAL",
+                                   SproutletWrapper::EXTERNAL_NETWORK_FUNCTION,
                                    _sproutlet_proxy->_max_sproutlet_depth,
                                    trail());
     }
@@ -708,7 +758,8 @@ void SproutletProxy::UASTsx::process_tsx_request(pjsip_rx_data* rdata)
 
 
 /// Handle a received CANCEL request.
-void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata)
+void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata,
+                                                    const std::string& reason)
 {
   // We may receive a CANCEL after sending a final response, so check that
   // the root Sproutlet is still connected.
@@ -719,7 +770,7 @@ void SproutletProxy::UASTsx::process_cancel_request(pjsip_rx_data* rdata)
     pjsip_tx_data* cancel = PJUtils::create_cancel(stack_data.endpt,
                                                    _req,
                                                    0);
-    _root->rx_cancel(cancel);
+    _root->rx_cancel(cancel, reason);
 
     // Schedule any requests generated by the Sproutlet.
     schedule_requests();
@@ -774,9 +825,18 @@ void SproutletProxy::UASTsx::on_new_client_response(UACTsx* uac_tsx,
 
 /// Handles a response to an associated UACTsx.
 void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
-                                                      ForkErrorState fork_error)
+                                                      ForkErrorState fork_error,
+                                                      const std::string& reason)
 {
   enter_context();
+
+  TRC_DEBUG("%s - client transaction not responding (%s)",
+            uac_tsx->name(),
+            reason.c_str());
+
+  SAS::Event client_not_responding(trail(), SASEvent::UAC_TSX_FAILED_NO_RESPONSE, 1);
+  client_not_responding.add_var_param(reason);
+  SAS::report_event(client_not_responding);
 
   // This is equivalent to a final response, so dissociate the UAC transaction.
   dissociate(uac_tsx);
@@ -791,17 +851,28 @@ void SproutletProxy::UASTsx::on_client_not_responding(UACTsx* uac_tsx,
 
     // Final response, so break the linkage between the UAC transaction and
     // the Sproutlets.
+    // We do this here (before we create and run the Callback) while we've got
+    // the lock to avoid races.
     _dmap_uac.erase(i->second);
     _umap.erase(i);
 
-    TRC_VERBOSE("Notifying upstream sproutlet %s of client failure: %s",
-                 upstream_sproutlet->service_name().c_str(),
-                 fork_error_to_str(fork_error));
 
-    upstream_sproutlet->rx_fork_error(fork_error, upstream_fork);
+    // We must ensure that the upstream Sproutlet handles this on a worker
+    // thread, so we create a Callback which we'll place on the worker thread
+    // queue if we're not on a worker thread already
+    Callback* cb = new Callback(this, [this, upstream_sproutlet, fork_error, upstream_fork]() -> void
+    {
+      TRC_VERBOSE("Notifying upstream sproutlet %s of client failure: %s",
+                   upstream_sproutlet->service_name().c_str(),
+                   fork_error_to_str(fork_error));
+      upstream_sproutlet->rx_fork_error(fork_error, upstream_fork);
 
-    // Schedule any requests generated by the Sproutlet.
-    schedule_requests();
+      // Schedule any requests generated by the Sproutlet.
+      this->schedule_requests();
+    });
+
+    // If we're already on a worker thread, the Callback is just run directly
+    PJUtils::run_callback_on_worker_thread(cb);
   }
 
   exit_context();
@@ -831,7 +902,7 @@ void SproutletProxy::UASTsx::on_tsx_state(pjsip_event* event)
   {
     // Notify the root Sproutlet of the error.
     TRC_DEBUG("Pass error to Sproutlet %p", _root);
-    _root->rx_error(PJSIP_SC_REQUEST_TIMEOUT);
+    _root->rx_error(PJSIP_SC_REQUEST_TIMEOUT, pjsip_event_str(event->body.tsx_state.type));
 
     // Schedule any requests generated by the Sproutlet.
     schedule_requests();
@@ -963,7 +1034,7 @@ void SproutletProxy::UASTsx::schedule_requests()
         }
 
         // Pass the request to the downstream sproutlet.
-        downstream->rx_request(req.req);
+        downstream->rx_request(req.req, req.allowed_host_state);
       }
       else
       {
@@ -1003,7 +1074,7 @@ bool SproutletProxy::UASTsx::schedule_timer(SproutletWrapper* tsx,
                                             TimerID& id,
                                             int duration)
 {
-  SproutletTimerCallbackData* tdata = new SproutletTimerCallbackData;
+  TimerCallbackData* tdata = new TimerCallbackData;
   tdata->uas_tsx = this;
   tdata->sproutlet_wrapper = tsx;
   tdata->context = context;
@@ -1045,8 +1116,13 @@ bool SproutletProxy::UASTsx::timer_running(TimerID id)
 void SproutletProxy::UASTsx::on_timer_pop(pj_timer_heap_t* th,
                                           pj_timer_entry* tentry)
 {
-  TRC_DEBUG("Sproutlet timer popped, id = %ld", (TimerID)tentry);
-  ((SproutletTimerCallbackData*)tentry->user_data)->uas_tsx->process_timer_pop(tentry);
+
+  TimerCallback* callback = new TimerCallback(tentry);
+
+  // Timer pops happen on the main pjsip transport thread, but we want to handle
+  // them on a worker thread.
+  // We relinquish ownership of the TimerCallback
+  PJUtils::run_callback_on_worker_thread(callback);
 }
 
 
@@ -1054,10 +1130,12 @@ void SproutletProxy::UASTsx::process_timer_pop(pj_timer_entry* tentry)
 {
   enter_context();
 
-  _pending_timers.erase(tentry);
-  SproutletTimerCallbackData* tdata = (SproutletTimerCallbackData*)tentry->user_data;
-  tdata->sproutlet_wrapper->on_timer_pop((TimerID)tentry, tdata->context);
-  schedule_requests();
+  if (_pending_timers.erase(tentry) != 0)
+  {
+    TimerCallbackData* tdata = (TimerCallbackData*)tentry->user_data;
+    tdata->sproutlet_wrapper->on_timer_pop((TimerID)tentry, tdata->context);
+    schedule_requests();
+  }
 
   exit_context();
 }
@@ -1075,7 +1153,15 @@ void SproutletProxy::UASTsx::tx_response(SproutletWrapper* downstream,
       int st_code = rsp->msg->line.status.code;
       set_trail(rsp, trail());
       on_tx_response(rsp);
-      pjsip_tsx_send_msg(_tsx, rsp);
+      pj_status_t status = pjsip_tsx_send_msg(_tsx, rsp);
+
+      if (status != PJ_SUCCESS)
+      {
+        TRC_INFO("Failed to send UASTsx message: %s",
+                 PJUtils::pj_status_to_string(status).c_str());
+        // pjsip_tsx_send_msg only decreases the ref count on success
+        pjsip_tx_data_dec_ref(rsp);
+      }
 
       if (st_code >= PJSIP_SC_OK)
       {
@@ -1111,7 +1197,7 @@ void SproutletProxy::UASTsx::tx_response(SproutletWrapper* downstream,
         _dmap_sproutlet.erase(i->second);
         _umap.erase(i);
       }
-      upstream->rx_response(rsp, fork_id);
+      upstream->rx_response(rsp, fork_id, downstream->get_error_state());
     }
     else
     {
@@ -1130,7 +1216,9 @@ void SproutletProxy::UASTsx::tx_response(SproutletWrapper* downstream,
 
 void SproutletProxy::UASTsx::tx_cancel(SproutletWrapper* upstream,
                                        int fork_id,
-                                       pjsip_tx_data* cancel)
+                                       pjsip_tx_data* cancel,
+                                       int st_code,
+                                       const std::string& reason)
 {
   TRC_DEBUG("Process CANCEL from %s on fork %d",
             upstream->service_name().c_str(), fork_id);
@@ -1142,7 +1230,7 @@ void SproutletProxy::UASTsx::tx_cancel(SproutletWrapper* upstream,
     // Pass the CANCEL request to the downstream Sproutlet.
     SproutletWrapper* downstream = i->second;
     TRC_DEBUG("Route CANCEL to %s", downstream->service_name().c_str());
-    downstream->rx_cancel(cancel);
+    downstream->rx_cancel(cancel, reason);
   }
   else
   {
@@ -1152,7 +1240,7 @@ void SproutletProxy::UASTsx::tx_cancel(SproutletWrapper* upstream,
       // CANCEL the downstream UAC transaction.
       TRC_DEBUG("Route CANCEL to downstream UAC transaction");
       UACTsx* uac_tsx = j->second;
-      uac_tsx->cancel_pending_tsx(0);
+      uac_tsx->cancel_pending_tsx(st_code, reason);
     }
 
     // Free the CANCEL request.
@@ -1172,7 +1260,8 @@ void SproutletProxy::UASTsx::check_destroy()
       (_umap.empty()) &&
       (_pending_req_q.empty()) &&
       (_pending_timers.empty()) &&
-      (_tsx == NULL))
+      (_tsx == NULL) &&
+      (_pending_callbacks == 0))
   {
     // UAS transaction has been destroyed and all Sproutlets are complete.
     TRC_DEBUG("Safe for UASTsx to suicide");
@@ -1271,12 +1360,12 @@ SproutletWrapper::SproutletWrapper(SproutletProxy* proxy,
   _send_requests(),
   _send_responses(),
   _pending_sends(0),
-  _pending_responses(0),
   _best_rsp(NULL),
   _complete(false),
   _process_actions_entered(0),
   _forks(),
   _pending_timers(),
+  _allowed_host_state(BaseResolver::ALL_LISTS),
   _trail_id(trail_id)
 {
   if (_original_transport != NULL)
@@ -1602,7 +1691,7 @@ int SproutletWrapper::send_request(pjsip_msg*& req, int allowed_host_state)
 
   _send_requests[fork_id] = {
     .tx_data = it->second,
-    .allowed_host_state = allowed_host_state
+    .allowed_host_state = (_allowed_host_state & allowed_host_state)
   };
 
   TRC_VERBOSE("%s sending %s on fork %d",
@@ -1626,6 +1715,8 @@ void SproutletWrapper::send_response(pjsip_msg*& rsp)
     return;
   }
 
+  pjsip_tx_data* tdata = it->second;
+
   // Check that this actually is a response
   if (rsp->type != PJSIP_RESPONSE_MSG)
   {
@@ -1633,10 +1724,17 @@ void SproutletWrapper::send_response(pjsip_msg*& rsp)
     return;
   }
 
-  TRC_VERBOSE("%s sending %s", _id.c_str(), pjsip_tx_data_get_info(it->second));
+  if (is_internal_network_func_boundary())
+  {
+    // We're at an internal network function boundary - strip off the Via
+    // header that we added on the request.
+    PJUtils::remove_top_via(tdata);
+  }
+
+  TRC_VERBOSE("%s sending %s", _id.c_str(), pjsip_tx_data_get_info(tdata));
 
   // We've found the tdata, move it to _send_responses.
-  _send_responses.push_back(it->second);
+  _send_responses.push_back(tdata);
 
   // Move the clone out of the clones list.
   _packets.erase(rsp);
@@ -1645,9 +1743,9 @@ void SproutletWrapper::send_response(pjsip_msg*& rsp)
   rsp = NULL;
 }
 
-void SproutletWrapper::cancel_fork(int fork_id, int reason)
+void SproutletWrapper::cancel_fork(int fork_id, int st_code, std::string reason)
 {
-  TRC_DEBUG("Request to cancel fork %d, reason = %d", fork_id, reason);
+  TRC_DEBUG("Request to cancel fork %d, reason = %d (%s)", fork_id, st_code, reason.c_str());
   if ((_forks.size() > (size_t)fork_id) &&
       (_forks[fork_id].state.tsx_state != PJSIP_TSX_STATE_TERMINATED))
   {
@@ -1655,15 +1753,16 @@ void SproutletWrapper::cancel_fork(int fork_id, int reason)
     {
       // The fork is still pending a final response to an INVITE request, so
       // we can CANCEL it.
-      TRC_VERBOSE("%s cancelling fork %d, reason = %d",
-                  _id.c_str(), fork_id, reason);
+      TRC_VERBOSE("%s cancelling fork %d, reason = %d (%s)",
+                  _id.c_str(), fork_id, st_code, reason.c_str());
       _forks[fork_id].pending_cancel = true;
+      _forks[fork_id].cancel_st_code = st_code;
       _forks[fork_id].cancel_reason = reason;
     }
   }
 }
 
-void SproutletWrapper::cancel_pending_forks(int reason)
+void SproutletWrapper::cancel_pending_forks(int st_code, std::string reason)
 {
   for (size_t ii = 0; ii < _forks.size(); ++ii)
   {
@@ -1674,10 +1773,23 @@ void SproutletWrapper::cancel_pending_forks(int reason)
       {
         // The fork is still pending a final response to an INVITE request, so
         // we can CANCEL it.
-        TRC_VERBOSE("%s cancelling fork %d, reason = %d", _id.c_str(), ii, reason);
+        TRC_VERBOSE("%s cancelling fork %d, status code %d, reason %s", _id.c_str(), ii, st_code, reason.c_str());
         _forks[ii].pending_cancel = true;
+        _forks[ii].cancel_st_code = st_code;
         _forks[ii].cancel_reason = reason;
       }
+    }
+  }
+}
+
+void SproutletWrapper::mark_pending_forks_as_abandoned()
+{
+  for (size_t ii = 0; ii < _forks.size(); ++ii)
+  {
+    if ((_forks[ii].state.tsx_state != PJSIP_TSX_STATE_NULL) &&
+        (_forks[ii].state.tsx_state != PJSIP_TSX_STATE_TERMINATED))
+    {
+      _forks[ii].abandoned = true;
     }
   }
 }
@@ -1760,7 +1872,7 @@ SAS::TrailId SproutletWrapper::trail() const
 
 bool SproutletWrapper::is_uri_reflexive(const pjsip_uri* uri) const
 {
-  return _proxy->is_uri_reflexive(uri, _sproutlet, trail());
+  return _proxy->is_uri_reflexive(uri, _sproutlet);
 }
 
 bool SproutletWrapper::is_uri_local(const pjsip_uri* uri) const
@@ -1782,15 +1894,25 @@ pjsip_sip_uri* SproutletWrapper::next_hop_uri(const std::string& service,
 
 pjsip_sip_uri* SproutletWrapper::get_routing_uri(const pjsip_msg* req) const
 {
+  // Get the URI that caused us to be routed to this Sproutlet or if no such
+  // URI exists e.g. if the Sproutlet was matched on a port, return NULL.
   const pjsip_route_hdr* route = route_hdr();
-  pjsip_sip_uri* routing_uri;
+  pjsip_sip_uri* routing_uri = NULL;
   if (route != NULL)
   {
-    routing_uri = (pjsip_sip_uri*)route->name_addr.uri;
+    if ((PJSIP_URI_SCHEME_IS_SIP(route->name_addr.uri)) &&
+        (is_uri_reflexive(route->name_addr.uri)))
+    {
+      routing_uri = (pjsip_sip_uri*)route->name_addr.uri;
+    }
   }
   else
   {
-    routing_uri = (pjsip_sip_uri*)req->line.req.uri;
+    if ((PJSIP_URI_SCHEME_IS_SIP(req->line.req.uri)) &&
+        (is_uri_reflexive(req->line.req.uri)))
+    {
+      routing_uri = (pjsip_sip_uri*)req->line.req.uri;
+    }
   }
 
   return routing_uri;
@@ -1801,21 +1923,14 @@ std::string SproutletWrapper::get_local_hostname(const pjsip_sip_uri* uri) const
   return _proxy->get_local_hostname(uri);
 }
 
-void SproutletWrapper::rx_request(pjsip_tx_data* req)
+void SproutletWrapper::rx_request(pjsip_tx_data* req, int allowed_host_state)
 {
   // SAS log the start of processing by this sproutlet
   SAS::Event event(trail(), SASEvent::BEGIN_SPROUTLET_REQ, 0);
   event.add_var_param(_service_name);
   SAS::report_event(event);
 
-  // Log the request at VERBOSE level before we send it out to aid in
-  // tracking its path through the sproutlets.
-  if (Log::enabled(Log::VERBOSE_LEVEL))
-  {
-    log_inter_sproutlet(req, true);
-  }
-
-  // Keep an immutable reference to the request.
+  // Store a reference to the request.
   _req = req;
 
   if (is_network_func_boundary())
@@ -1827,6 +1942,31 @@ void SproutletWrapper::rx_request(pjsip_tx_data* req)
     {
       --mf_hdr->ivalue;
     }
+  }
+  else
+  {
+    // The request was passed by another sproutlet in the same network
+    // function, so respect any host state restrictions passed through.
+    _allowed_host_state = allowed_host_state;
+  }
+
+  if (is_internal_network_func_boundary() && !stack_data.sprout_hostname.empty())
+  {
+    // Add a Via header to indicate that the request has traversed the upstream
+    // network function.  This can be used to determine the source network
+    // function on requests passed internally.
+    pjsip_via_hdr *hvia = PJUtils::add_top_via(req);
+    std::string network_func_host =
+                     _upstream_network_func + "." + stack_data.sprout_hostname;
+    pj_strdup2(req->pool, &hvia->sent_by.host, network_func_host.c_str());
+    pj_strdup2(req->pool, &hvia->transport, "TCP");
+  }
+
+  // Log the request at VERBOSE level before we send it out to aid in
+  // tracking its path through the sproutlets.
+  if (Log::enabled(Log::VERBOSE_LEVEL))
+  {
+    log_inter_sproutlet(req, true);
   }
 
   // Clone the request to get a mutable copy to pass to the Sproutlet.
@@ -1858,7 +1998,9 @@ void SproutletWrapper::rx_request(pjsip_tx_data* req)
   process_actions(complete_after_actions);
 }
 
-void SproutletWrapper::rx_response(pjsip_tx_data* rsp, int fork_id)
+void SproutletWrapper::rx_response(pjsip_tx_data* rsp,
+                                   int fork_id,
+                                   ForkErrorState error_state)
 {
   // SAS log the start of processing by this sproutlet
   SAS::Event event(trail(), SASEvent::BEGIN_SPROUTLET_RSP, 0);
@@ -1889,12 +2031,13 @@ void SproutletWrapper::rx_response(pjsip_tx_data* rsp, int fork_id)
     // Final response, so mark the fork as completed and decrement the number
     // of pending responses.
     _forks[fork_id].state.tsx_state = PJSIP_TSX_STATE_TERMINATED;
+    _forks[fork_id].state.error_state = error_state;
     pjsip_tx_data_dec_ref(_forks[fork_id].req);
     _forks[fork_id].req = NULL;
     TRC_VERBOSE("%s received final response %s on fork %d, state = %s",
                 _id.c_str(), pjsip_tx_data_get_info(rsp),
                 fork_id, pjsip_tsx_state_str(_forks[fork_id].state.tsx_state));
-    --_pending_responses;
+    _forks[fork_id].pending_response = false;
 
     if ((_sproutlet != NULL) &&
       (_sproutlet->_outgoing_sip_transactions_tbl != NULL))
@@ -1915,21 +2058,24 @@ void SproutletWrapper::rx_response(pjsip_tx_data* rsp, int fork_id)
   process_actions(false);
 }
 
-void SproutletWrapper::rx_cancel(pjsip_tx_data* cancel)
+void SproutletWrapper::rx_cancel(pjsip_tx_data* cancel, const std::string& reason)
 {
   TRC_VERBOSE("%s received CANCEL request", _id.c_str());
   _sproutlet_tsx->on_rx_cancel(PJSIP_SC_REQUEST_TERMINATED,
                            cancel->msg);
   pjsip_tx_data_dec_ref(cancel);
-  cancel_pending_forks();
+  cancel_pending_forks(PJSIP_SC_REQUEST_TERMINATED, reason);
   process_actions(false);
 }
 
-void SproutletWrapper::rx_error(int status_code)
+void SproutletWrapper::rx_error(int status_code, const std::string& reason)
 {
-  TRC_VERBOSE("%s received error %d", _id.c_str(), status_code);
+  TRC_VERBOSE("%s received error %d (reason %s)",
+              _id.c_str(),
+              status_code,
+              reason.c_str());
   _sproutlet_tsx->on_rx_cancel(status_code, NULL);
-  cancel_pending_forks();
+  cancel_pending_forks(status_code, reason);
 
   // Consider the transaction to be complete as no final response should be
   // sent upstream.
@@ -1960,12 +2106,19 @@ void SproutletWrapper::rx_fork_error(ForkErrorState fork_error, int fork_id)
                                                   NULL,
                                                   &rsp);
 
+    // SAS log the error and response
+    SAS::Event event(trail(), SASEvent::RX_FORK_ERROR, 0);
+    event.add_static_param(fork_id);
+    event.add_static_param(fork_error);
+    event.add_static_param(status_code);
+    SAS::report_event(event);
+
     // This counts as a final response, so mark the fork as terminated and
     // decrement the number of pending responses.
     _forks[fork_id].state.tsx_state = PJSIP_TSX_STATE_TERMINATED;
     pjsip_tx_data_dec_ref(_forks[fork_id].req);
     _forks[fork_id].req = NULL;
-    --_pending_responses;
+    _forks[fork_id].pending_response = false;
 
     if (status == PJ_SUCCESS)
     {
@@ -1986,7 +2139,7 @@ void SproutletWrapper::rx_fork_error(ForkErrorState fork_error, int fork_id)
 
 void SproutletWrapper::on_timer_pop(TimerID id, void* context)
 {
-  TRC_DEBUG("Timer has popped");
+  TRC_DEBUG("Processing timer pop, id = %ld", id);
   _pending_timers.erase(id);
   _sproutlet_tsx->on_timer_expiry(context);
   process_actions(false);
@@ -2032,7 +2185,7 @@ void SproutletWrapper::process_actions(bool complete_after_actions)
 
   if ((!_complete) &&
       (_best_rsp != NULL) &&
-      (_pending_sends + _pending_responses == 0))
+      (_pending_sends + count_pending_actionable_responses() == 0))
   {
     // There are no pending responses and no new forked requests waiting to
     // be sent, and the Sproutlet has sent at least one final response, so
@@ -2082,7 +2235,7 @@ void SproutletWrapper::process_actions(bool complete_after_actions)
   _process_actions_entered--;
 
   if ((_complete) &&
-      (_pending_responses == 0) &&
+      (count_pending_responses() == 0) &&
       (_pending_timers.empty()) &&
       (_process_actions_entered == 0))
   {
@@ -2100,8 +2253,8 @@ void SproutletWrapper::aggregate_response(pjsip_tx_data* rsp)
 
   if (_complete)
   {
-    // We've already sent a final response upstream (a 200 OK) so discard
-    // this response.
+    // We've already sent a final response upstream (a 200 OK or 408 timeout) so
+    // discard this response.
     TRC_DEBUG("Discard stale response %s (%s)",
               pjsip_tx_data_get_info(rsp), rsp->obj_name);
     deregister_tdata(rsp);
@@ -2180,6 +2333,37 @@ void SproutletWrapper::aggregate_response(pjsip_tx_data* rsp)
   }
 }
 
+// Counts the number of forks that are pending a response.
+int SproutletWrapper::count_pending_responses()
+{
+  int forks_pending_response = 0;
+  for (size_t ii = 0; ii < _forks.size(); ++ii)
+  {
+    if (_forks[ii].pending_response)
+    {
+      ++forks_pending_response;
+    }
+  }
+  return forks_pending_response;
+}
+
+// Counts the number of forks that are pending a response, and have not been
+// marked as timed out (which means any response they send will not be
+// acted on).
+int SproutletWrapper::count_pending_actionable_responses()
+{
+  int forks_pending_actionable_response = 0;
+  for (size_t ii = 0; ii < _forks.size(); ++ii)
+  {
+    if (_forks[ii].pending_response &&
+        !_forks[ii].abandoned)
+    {
+      ++forks_pending_actionable_response;
+    }
+  }
+  return forks_pending_actionable_response;
+}
+
 void SproutletWrapper::tx_request(SproutletProxy::SendRequest req,
                                   int fork_id)
 {
@@ -2194,7 +2378,7 @@ void SproutletWrapper::tx_request(SproutletProxy::SendRequest req,
     // state for determining when we can legally send CANCEL requests so using
     // CALLING in all cases is fine).
     _forks[fork_id].state.tsx_state = PJSIP_TSX_STATE_CALLING;
-    ++_pending_responses;
+    _forks[fork_id].pending_response = true;
 
     // Store a reference to the request.
     TRC_DEBUG("%s store reference to non-ACK request %s on fork %d",
@@ -2252,8 +2436,12 @@ void SproutletWrapper::tx_cancel(int fork_id)
   // See issue 1232.
   pjsip_tx_data* cancel = PJUtils::create_cancel(stack_data.endpt,
                                                  _forks[fork_id].req,
-                                                 _forks[fork_id].cancel_reason);
-  _proxy_tsx->tx_cancel(this, fork_id, cancel);
+                                                 _forks[fork_id].cancel_st_code);
+  _proxy_tsx->tx_cancel(this,
+                        fork_id,
+                        cancel,
+                        _forks[fork_id].cancel_st_code,
+                        _forks[fork_id].cancel_reason);
   _forks[fork_id].pending_cancel = false;
 }
 
@@ -2337,12 +2525,61 @@ void SproutletWrapper::log_inter_sproutlet(pjsip_tx_data* tdata,
 
 bool SproutletWrapper::is_network_func_boundary() const
 {
-  bool network_func_boundary = (_this_network_func != _upstream_network_func);
+  // If this network function has a different name to the upstream one, then
+  // we're obviously at a network function boundary.  We're also on a boundary
+  // between two instances of the same network function if the service name
+  // matches the upstream network function (i.e. the two network function names
+  // match, but we're entering the first Sproutlet in the network function).
+  bool network_func_boundary = (_this_network_func != _upstream_network_func) ||
+                               (_service_name == _upstream_network_func);
 
-  TRC_DEBUG("Network function boundary: %s ('%s'->'%s')",
+  TRC_DEBUG("Network function boundary: %s ('%s'->'%s'/'%s')",
             network_func_boundary ? "yes" : "no",
             _upstream_network_func.c_str(),
-            _this_network_func.c_str());
+            _this_network_func.c_str(),
+            _service_name.c_str());
 
   return network_func_boundary;
+}
+
+bool SproutletWrapper::is_internal_network_func_boundary() const
+{
+  // An internal network function boundary doesn't involve an external hop.
+  bool internal_boundary = is_network_func_boundary() &&
+                           (_upstream_network_func != EXTERNAL_NETWORK_FUNCTION) &&
+                           (_this_network_func != EXTERNAL_NETWORK_FUNCTION);
+
+  TRC_DEBUG("Internal network function boundary: %s",
+            internal_boundary ? "yes" : "no");
+
+  return internal_boundary;
+}
+
+// Get the overall error state for this wrapper.  This is used when passing
+// error state upstream to another sproutlet.  In the most common case, there
+// will only have been a single fork, and we will return its state.  For more
+// complicated scenarios, we can't infer anything about the downstream error
+// state unless all forks had the same error state.  For example, a transport
+// error on a single fork is not significant, as the sproutlet may have retried
+// on another fork, and had a successful result.  If the results don't match,
+// we return NONE.
+ForkErrorState SproutletWrapper::get_error_state() const
+{
+  if ((_forks.size() <= 0) || is_network_func_boundary())
+  {
+    // Don't expose error state upstream across network boundaries.
+    return ForkErrorState::NONE;
+  }
+
+  ForkErrorState error_state = _forks[0].state.error_state;
+
+  for (const auto& fork : _forks)
+  {
+    if (fork.state.error_state != error_state)
+    {
+      return ForkErrorState::NONE;
+    }
+  }
+
+  return error_state;
 }

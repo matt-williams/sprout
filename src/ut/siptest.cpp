@@ -106,6 +106,7 @@ void SipTest::SetUpTestCase()
   stack_data.home_domains.insert("sprout.homedomain");
   stack_data.home_domains.insert("sprout-site2.homedomain");
   stack_data.default_home_domain = pj_str("homedomain");
+  stack_data.enable_orig_sip_to_tel_coerce = true;
   URIClassifier::home_domains.push_back(&stack_data.default_home_domain);
   URIClassifier::home_domains.push_back(&sprout_hostname);
   URIClassifier::home_domains.push_back(&sprout_site2_hostname);
@@ -116,8 +117,9 @@ void SipTest::SetUpTestCase()
   stack_data.record_route_on_completion_of_terminating = true;
   stack_data.default_session_expires = 60 * 10;
   stack_data.max_session_expires = 90 * 10;
-  stack_data.sipresolver = new SIPResolver(&_dnsresolver);
   stack_data.addr_family = AF_INET;
+  stack_data.sipresolver = new SIPResolver(&_dnsresolver);
+  stack_data.sprout_hostname = "sprout.homedomain";
 
   // Sort out logging.
   init_pjsip_logging(99, false, "");
@@ -143,6 +145,14 @@ void SipTest::SetUpTestCase()
 
   // Now we have a pool with PJSIP, we can parse the S-CSCF URI.
   SipTest::SetScscfUri("sip:scscf.sprout.homedomain:5058;transport=TCP");
+}
+
+// Replaces the SIP Resolver with one without a graylist. Used by bono_test,
+// as bono does not currently support graylisting.
+void SipTest::SIPResolverNoGraylist()
+{
+  delete stack_data.sipresolver;
+  stack_data.sipresolver = new SIPResolver(&_dnsresolver, 30, 0);
 }
 
 void SipTest::SetScscfUri(const std::string& scscf_uri)
@@ -613,7 +623,7 @@ void SipTest::register_uri(SubscriberDataManager* sdm,
   }
   AssociatedURIs associated_uris = {};
   associated_uris.add_uri(uri, false);
-  bool ret = sdm->set_aor_data(uri, aor, 0);
+  bool ret = sdm->set_aor_data(uri, SubscriberDataManager::EventTrigger::ADMIN, aor, 0);
   delete aor;
   EXPECT_TRUE(ret);
 };
@@ -880,7 +890,7 @@ void MsgMatcher::matches(pjsip_msg* msg)
 void MsgMatcher::body_regex_matches(pjsip_msg* msg)
 {
   if (_body_regex != "")
-  {    
+  {
     char buf[16384];
     int n = msg->body->print_body(msg->body, buf, sizeof(buf));
     string body(buf, n);

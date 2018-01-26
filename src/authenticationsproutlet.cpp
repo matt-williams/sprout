@@ -12,6 +12,7 @@
 #include "constants.h"
 #include "sproutsasevent.h"
 #include "authenticationsproutlet.h"
+#include "registration_utils.h"
 #include "json_parse_utils.h"
 #include <openssl/hmac.h>
 #include "base64.h"
@@ -59,7 +60,7 @@ AuthenticationSproutlet::AuthenticationSproutlet(const std::string& name,
                                                  AnalyticsLogger* analytics_logger,
                                                  SNMP::AuthenticationStatsTables* auth_stats_tbls,
                                                  bool nonce_count_supported_arg,
-                                                 get_expiry_for_binding_fn get_expiry_for_binding_arg) :
+                                                 int cfg_max_expires) :
   Sproutlet(name, port, uri, "", aliases, NULL, NULL, network_function),
   _aka_realm((realm_name != "") ?
     pj_strdup3(stack_data.pool, realm_name.c_str()) :
@@ -72,7 +73,7 @@ AuthenticationSproutlet::AuthenticationSproutlet(const std::string& name,
   _analytics(analytics_logger),
   _auth_stats_tables(auth_stats_tbls),
   _nonce_count_supported(nonce_count_supported_arg),
-  _get_expiry_for_binding(get_expiry_for_binding_arg),
+  _max_expires(cfg_max_expires),
   _non_register_auth_mode(non_register_auth_mode_param),
   _next_hop_service(next_hop_service)
 {
@@ -90,6 +91,13 @@ bool AuthenticationSproutlet::init()
   params.lookup3 = AuthenticationSproutletTsx::user_lookup;
   params.options = 0;
   status = pjsip_auth_srv_init2(stack_data.pool, &_auth_srv, &params);
+
+  if (status != PJ_SUCCESS)
+  {
+    // LCOV_EXCL_START - Don't test initialization failures in UT
+    TRC_ERROR("Authentication sproutlet failed to initialize (%d)", status);
+    // LCOV_EXCL_STOP
+  }
 
   params.options = PJSIP_AUTH_SRV_IS_PROXY;
   status = pjsip_auth_srv_init2(stack_data.pool, &_auth_srv_proxy, &params);
@@ -117,7 +125,7 @@ SproutletTsx* AuthenticationSproutlet::get_tsx(SproutletHelper* helper,
   }
 
   // We're not interested in the message so create a next hop URI.
-  pjsip_sip_uri* base_uri = helper->get_routing_uri(req);
+  pjsip_sip_uri* base_uri = helper->get_routing_uri(req, this);
   next_hop = helper->next_hop_uri(_next_hop_service,
                                   base_uri,
                                   pool);
@@ -326,7 +334,9 @@ int AuthenticationSproutletTsx::calculate_challenge_expiration_time(pjsip_msg* r
        contact_hdr = (pjsip_contact_hdr*)
           pjsip_msg_find_hdr(req, PJSIP_H_CONTACT, contact_hdr->next))
   {
-    expires = std::max(expires, _authentication->_get_expiry_for_binding(contact_hdr, expires_hdr));
+    expires = std::max(expires, RegistrationUtils::expiry_for_binding(contact_hdr,
+                                                                      expires_hdr,
+                                                                      _authentication->_max_expires));
   }
 
   return expires + time(NULL);
@@ -588,7 +598,7 @@ void AuthenticationSproutletTsx::create_challenge(pjsip_digest_credential* crede
     // This is either a REGISTER, or a request that Sprout should authenticate
     // by treating it like a REGISTER. Get the Authentication Vector from the
     // HSS.
-    PJUtils::get_impi_and_impu(req, impi, impu_for_hss);
+    PJUtils::get_impi_and_impu(req, impi, impu_for_hss, get_pool(req), trail());
     TRC_DEBUG("Get AV from HSS for impi=%s impu=%s",
               impi.c_str(), impu_for_hss.c_str());
 
@@ -667,6 +677,18 @@ void AuthenticationSproutletTsx::create_challenge(pjsip_digest_credential* crede
     // Digest authentication).
     hdr->scheme = STR_DIGEST;
     pj_pool_t* rsp_pool = get_pool(rsp);
+    pj_create_random_string(buf, sizeof(buf));
+    pj_strdup(rsp_pool, &hdr->challenge.digest.opaque, &random);
+
+    // Log the opaque value to SAS to enable us to correlate this challenge
+    // with the subsequent transaction containing the challenge response.
+    std::string opaque;
+    opaque.assign(buf, sizeof(buf));
+    TRC_DEBUG("Log opaque value %s to SAS as a generic correlator", opaque.c_str());
+    SAS::Marker opaque_marker(trail(), MARKED_ID_GENERIC_CORRELATOR, 1u);
+    opaque_marker.add_static_param((uint32_t)UniquenessScopes::DIGEST_OPAQUE);
+    opaque_marker.add_var_param(opaque);
+    SAS::report_marker(opaque_marker, SAS::Marker::Scope::Trace);
 
     ImpiStore::AuthChallenge* auth_challenge;
     if (av->is_aka())
@@ -683,8 +705,6 @@ void AuthenticationSproutletTsx::create_challenge(pjsip_digest_credential* crede
       hdr->challenge.digest.algorithm = ((aka->akaversion == 2) ? STR_AKAV2_MD5 : STR_AKAV1_MD5);
 
       pj_strdup2(rsp_pool, &hdr->challenge.digest.nonce, aka->nonce.c_str());
-      pj_create_random_string(buf, sizeof(buf));
-      pj_strdup(rsp_pool, &hdr->challenge.digest.opaque, &random);
       hdr->challenge.digest.qop = STR_AUTH;
       hdr->challenge.digest.stale = stale;
 
@@ -767,8 +787,6 @@ void AuthenticationSproutletTsx::create_challenge(pjsip_digest_credential* crede
       pj_create_random_string(buf, sizeof(buf));
       nonce.assign(buf, sizeof(buf));
       pj_strdup(rsp_pool, &hdr->challenge.digest.nonce, &random);
-      pj_create_random_string(buf, sizeof(buf));
-      pj_strdup(rsp_pool, &hdr->challenge.digest.opaque, &random);
       pj_strdup2(rsp_pool, &hdr->challenge.digest.qop, digest->qop.c_str());
       hdr->challenge.digest.stale = stale;
 
@@ -783,11 +801,17 @@ void AuthenticationSproutletTsx::create_challenge(pjsip_digest_credential* crede
     // Add the header to the message.
     pjsip_msg_add_hdr(rsp, (pjsip_hdr*)hdr);
 
-    // Store the branch parameter in memcached for correlation purposes
-    pjsip_via_hdr* via_hdr = (pjsip_via_hdr*)pjsip_msg_find_hdr(req, PJSIP_H_VIA, NULL);
-    auth_challenge->set_correlator((via_hdr != NULL) ?
-                                   PJUtils::pj_str_to_string(&via_hdr->branch_param) :
-                                   "");
+    // Store the opaque value that we generated in the IMPI store.  This means
+    // that if the challenge times out we can log the same opaque marker to SAS
+    // there in order to correlate the SAS trail for the timeout with the SAS
+    // trail generated for this initial REGISTER.
+    //
+    // Note we aren't dependent on this to correlate the challenged REGISTER
+    // transaction and the transaction containing the challenge response
+    // because we use the opaque value from the SIP messages directly (meaning
+    // that transactions get correlated even in the case of IMPI store
+    // unavailability).
+    auth_challenge->set_correlator(opaque);
 
     // Add the IMPU to the challenge
     auth_challenge->set_impu(impu_for_hss);
@@ -911,10 +935,14 @@ void AuthenticationSproutletTsx::on_rx_initial_request(pjsip_msg* req)
   // URI as a starting point.
   pjsip_sip_uri* scscf_uri = (pjsip_sip_uri*)pjsip_uri_clone(get_pool(req), stack_data.scscf_uri);
   pjsip_sip_uri* routing_uri = get_routing_uri(req);
-  SCSCFUtils::get_scscf_uri(get_pool(req),
-                            get_local_hostname(routing_uri),
-                            get_local_hostname(scscf_uri),
-                            scscf_uri);
+  if (routing_uri != NULL)
+  {
+    SCSCFUtils::get_scscf_uri(get_pool(req),
+                              get_local_hostname(routing_uri),
+                              get_local_hostname(scscf_uri),
+                              scscf_uri);
+  }
+
   _scscf_uri = PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, (pjsip_uri*)scscf_uri);
 
   pjsip_digest_credential* credentials = get_credentials(req);
@@ -1006,16 +1034,31 @@ void AuthenticationSproutletTsx::on_rx_initial_request(pjsip_msg* req)
       }
     }
 
+    // If this is the first response to the challenge then log the value of
+    // opaque to SAS as a marker. We also do this when we challenge the initial
+    // REGISTER and in this way the two transactions (the challenge and the
+    // challenge response) get correlated in SAS.
+    //
+    // We have to be slightly careful how we determine whether this is the first
+    // response. If we just check that the nonce_count in the request is 1 then
+    // if someone spams us with REGISTERs that have a nonce_count of 1 we will
+    // try and correlate them all, ultimately ending up with an unloadable SAS
+    // trace. So instead we use the nonce_count from the IMPI store. But we
+    // also want to correlate REGISTERs that might be valid initial responses in
+    // the case where the IMPIStore is unavailable.
+    if ((impi_obj == NULL) ||
+        ((auth_challenge != NULL) && (auth_challenge->get_nonce_count() == 1)))
+    {
+      std::string opaque = PJUtils::pj_str_to_string(&credentials->opaque);
+      TRC_DEBUG("Log opaque value %s to SAS as a generic correlator", opaque.c_str());
+      SAS::Marker opaque_marker(trail(), MARKED_ID_GENERIC_CORRELATOR, 2u);
+      opaque_marker.add_static_param((uint32_t)UniquenessScopes::DIGEST_OPAQUE);
+      opaque_marker.add_var_param(opaque);
+      SAS::report_marker(opaque_marker, SAS::Marker::Scope::Trace);
+    }
+
     if (status == PJ_SUCCESS)
     {
-      // We're about to do the authentication check. If this is the first
-      // response to a challenge correlate it to the flow that issued the
-      // challenge in the first place.
-      if ((auth_challenge != NULL) && (nonce_count == 1))
-      {
-        correlate_trail_to_challenge(auth_challenge, trail());
-      }
-
       // Request contains a response to a previous challenge, so pass it to
       // the authentication module to verify.
       TRC_DEBUG("Verify authentication information in request");
@@ -1027,7 +1070,7 @@ void AuthenticationSproutletTsx::on_rx_initial_request(pjsip_msg* req)
                                       &sc,
                                       (void*)auth_challenge);
 
-      if (status == PJ_SUCCESS)
+      if ((status == PJ_SUCCESS) && (auth_challenge != NULL))
       {
         // The authentication information in the request was verified.
         TRC_DEBUG("Request authenticated successfully");
@@ -1180,17 +1223,6 @@ void AuthenticationSproutletTsx::on_rx_initial_request(pjsip_msg* req)
   // We're done with the IMPI object now so delete it.
   delete impi_obj; impi_obj = NULL;
 
-  // The message either has insufficient authentication information, or
-  // has failed authentication.  In either case, the message will be
-  // absorbed and responded to by the authentication module, so we need to
-  // add SAS markers so the trail will become searchable.
-  SAS::Marker start_marker(trail(), MARKER_ID_START, 1u);
-  SAS::report_marker(start_marker);
-
-  // Add a SAS end marker
-  SAS::Marker end_marker(trail(), MARKER_ID_END, 1u);
-  SAS::report_marker(end_marker);
-
   // Create an ACR for the message and pass the request to it.  Role is always
   // considered originating for a REGISTER request.
   ACR* acr = _authentication->_acr_factory->get_acr(trail(),
@@ -1245,15 +1277,20 @@ void AuthenticationSproutletTsx::on_rx_initial_request(pjsip_msg* req)
     {
       // Notify Homestead and the HSS that this authentication attempt
       // has definitively failed.
-      std::string impi;
-      std::string impu;
 
-      PJUtils::get_impi_and_impu(req, impi, impu);
-      _authentication->_hss->update_registration_state(impu,
-                                                  impi,
-                                                  HSSConnection::AUTH_FAIL,
-                                                  _scscf_uri,
-                                                  trail());
+      HSSConnection::irs_query irs_query;
+      irs_query._req_type = HSSConnection::AUTH_FAIL;
+      irs_query._server_name = _scscf_uri;
+      HSSConnection::irs_info unused_irs_info;
+
+      PJUtils::get_impi_and_impu(req,
+                                 irs_query._private_id,
+                                 irs_query._public_id,
+                                 get_pool(req),
+                                 trail());
+      _authentication->_hss->update_registration_state(irs_query,
+                                                       unused_irs_info,
+                                                       trail());
     }
 
     if (_authentication->_analytics != NULL)

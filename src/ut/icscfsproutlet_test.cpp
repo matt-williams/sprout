@@ -20,6 +20,7 @@
 #include "utils.h"
 #include "test_utils.hpp"
 #include "icscfsproutlet.h"
+#include "mock_sas.h"
 #include "fakehssconnection.hpp"
 #include "test_interposer.hpp"
 #include "sproutletproxy.h"
@@ -80,7 +81,8 @@ public:
                                           _enum_service,
                                           NULL,
                                           NULL,
-                                          false);
+                                          false,
+                                          ICSCF_PORT);
     _icscf_sproutlet->init();
     std::list<Sproutlet*> sproutlets;
     sproutlets.push_back(_icscf_sproutlet);
@@ -120,6 +122,23 @@ public:
 
     delete _icscf_proxy; _icscf_proxy = NULL;
     delete _icscf_sproutlet; _icscf_sproutlet = NULL;
+  }
+
+  /// Check that we logged an ICID to SAS.
+  void check_sas_correlator_icid(std::string value, bool present=true)
+  {
+    bool found_value = false;
+    std::vector<MockSASMessage*> markers = mock_sas_find_marker_multiple(MARKER_ID_IMS_CHARGING_ID);
+    for (MockSASMessage* marker : markers)
+    {
+      EXPECT_EQ(marker->var_params.size(), 1u);
+      if (marker->var_params[0] == value)
+      {
+        found_value = true;
+        break;
+      }
+    }
+    EXPECT_EQ(found_value, present);
   }
 
 protected:
@@ -213,6 +232,70 @@ protected:
 };
 
 using TestingCommon::Message;
+
+TEST_F(ICSCFSproutletTest, RouteRegisterSCSCFBlacklisted)
+{
+  // Tests routing of REGISTER requests when the HSS responds with a blacklisted
+  // S-CSCF name.
+
+  pjsip_tx_data* tdata;
+
+  // Create a TCP connection to the I-CSCF listening port.
+  TransportFlow* tp = new TransportFlow(TransportFlow::Protocol::TCP,
+                                        ICSCF_PORT,
+                                        "1.2.3.4",
+                                        49152);
+
+  // Add all but one S-CSCF to the blacklist (scscf1.homedomain is not blacklisted).
+  _icscf_sproutlet->_blacklisted_scscfs.insert("sip:scscf2.homedomain:5058;transport=TCP");
+  _icscf_sproutlet->_blacklisted_scscfs.insert("sip:scscf3.homedomain:5058;transport=TCP");
+  _icscf_sproutlet->_blacklisted_scscfs.insert("sip:scscf4.homedomain:5058;transport=TCP");
+  _icscf_sproutlet->_blacklisted_scscfs.insert("sip:scscf5.homedomain:5058;transport=TCP");
+
+  // Set up HSS response for user registration where a blacklisted S-CSCF is returned. Also set up the subsequent capabilities query.
+  _hss_connection->set_result("/impi/6505551000%40homedomain/registration-status?impu=sip%3A6505551000%40homedomain&visited-network=homedomain&auth-type=REG",
+  "{\"result-code\": 2001,"
+  " \"scscf\": \"sip:scscf5.homedomain:5058;transport=TCP\"}");
+  _hss_connection->set_result("/impi/6505551000%40homedomain/registration-status?impu=sip%3A6505551000%40homedomain&visited-network=homedomain&auth-type=CAPAB",
+  "{\"result-code\": 2001,"
+  " \"scscf\": \"sip:scscf5.homedomain:5058;transport=TCP\"}");
+
+  // Inject a REGISTER request.
+  Message msg2;
+  msg2._first_hop = true;
+  msg2._method = "REGISTER";
+  msg2._requri = "sip:homedomain";
+  msg2._to = msg2._from;        // To header contains AoR in REGISTER requests.
+  msg2._via = tp->to_string(false);
+  msg2._extra = "Contact: sip:6505551000@" +
+                tp->to_string(true) +
+                ";ob;expires=300;+sip.ice;reg-id=1;+sip.instance=\"<urn:uuid:00000000-0000-0000-0000-b665231f1213>\"";
+  inject_msg(msg2.get_request(), tp);
+
+  // REGISTER request should be forwarded to scscf1.homedomain as this is
+  // the only S-CSCF that is not blacklisted.
+  ASSERT_EQ(1, txdata_count());
+  tdata = current_txdata();
+  expect_target("TCP", "10.10.10.1", 5058, tdata);
+  ReqMatcher r3("REGISTER");
+  r3.matches(tdata->msg);
+
+  // Send a 200 OK response.
+  inject_msg(respond_to_current_txdata(200));
+
+  // Check the response is forwarded back to the source.
+  ASSERT_EQ(1, txdata_count());
+  tdata = current_txdata();
+  expect_target("TCP", "1.2.3.4", 49152, tdata);
+  RespMatcher r4(200);
+  r4.matches(tdata->msg);
+
+  free_txdata();
+  _hss_connection->delete_result("/impi/6505551000%40homedomain/registration-status?impu=sip%3A6505551000%40homedomain&visited-network=homedomain&auth-type=REG");
+  _hss_connection->delete_result("/impi/6505551000%40homedomain/registration-status?impu=sip%3A6505551000%40homedomain&visited-network=homedomain&auth-type=CAPAB");
+
+  delete tp;
+}
 
 TEST_F(ICSCFSproutletTest, RouteRegisterHSSServerName)
 {
@@ -1526,8 +1609,10 @@ TEST_F(ICSCFSproutletTest, RouteOrigInviteHSSServerName)
                               "{\"result-code\": 2001,"
                               " \"scscf\": \"sip:scscf1.homedomain:5058;transport=TCP\"}");
 
-  // Inject a INVITE request with orig in the Route header and a P-Served-User
-  // header.
+  // Inject a INVITE request with orig in the Route header, a P-Served-User
+  // header and a P-Charging-Vector header. Check the ICID from the PCV is
+  // logged to SAS.
+  mock_sas_collect_messages(true);
   Message msg1;
   msg1._first_hop = true;
   msg1._method = "INVITE";
@@ -1535,9 +1620,13 @@ TEST_F(ICSCFSproutletTest, RouteOrigInviteHSSServerName)
   msg1._extra = "Contact: sip:6505551000@" +
                 tp->to_string(true) +
                 ";ob;expires=300;+sip.ice;reg-id=1;+sip.instance=\"<urn:uuid:00000000-0000-0000-0000-b665231f1213>\"\r\n";
-  msg1._extra += "P-Served-User: <sip:6505551000@homedomain>";
+  msg1._extra += "P-Served-User: <sip:6505551000@homedomain>\r\n";
+  msg1._extra += "P-Charging-Vector: icid-value=4815152542";
   msg1._route = "Route: <sip:homedomain;orig>";
   inject_msg(msg1.get_request(), tp);
+  check_sas_correlator_icid("4815152542");
+  mock_sas_discard_messages();
+  mock_sas_collect_messages(false);
 
   // Expecting 100 Trying and forwarded INVITE
   ASSERT_EQ(2, txdata_count());
@@ -3617,9 +3706,9 @@ TEST_F(ICSCFSproutletTest, RouteOutOfDialogAck)
   delete tp;
 }
 
-// Test the I-CSCF can handle a MESSAGE where the Request URI is
+// Test the I-CSCF can handle an originating MESSAGE where the Request URI is
 // "urn:service:sos".
-TEST_F(ICSCFSproutletTest, ICSCFHandlesUrnUri)
+TEST_F(ICSCFSproutletTest, ICSCFHandlesUrnUriOrig)
 {
   pjsip_tx_data* tdata;
 
@@ -3671,5 +3760,134 @@ TEST_F(ICSCFSproutletTest, ICSCFHandlesUrnUri)
   //Clean up.
   free_txdata();
   _hss_connection->delete_result("/impu/sip%3A6505551000%40homedomain/location?originating=true");
+  delete tp;
+}
+
+// Test the I-CSCF can handle a terminating MESSAGE where the Request URI is
+// "urn:service:sos".
+TEST_F(ICSCFSproutletTest, ICSCFHandlesUrnUriTerm)
+{
+  pjsip_tx_data* tdata;
+
+  // Create a TCP connection to the I-CSCF listening port.
+  TransportFlow* tp = new TransportFlow(TransportFlow::Protocol::TCP,
+                                        ICSCF_PORT,
+                                        "1.2.3.4",
+                                        49152);
+
+  // Inject a SIP MESSAGE.
+  Message msg1;
+  msg1._first_hop = true;
+  msg1._method = "MESSAGE";
+  msg1._requri = "urn:service:sos";
+  msg1._full_to_header = "To: <urn:service:sos>";
+  msg1._route = "Route: <sip:homedomain>";
+  inject_msg(msg1.get_request(), tp);
+
+  // As the message is terminating the I-CSCF will attempt to route based on
+  // the ReqURI - as this in an invalid URI to route on the MESSAGE should
+  // be rejected.
+  tdata = current_txdata();
+  RespMatcher(400).matches(tdata->msg);
+  tp->expect_target(tdata);
+  free_txdata();
+
+  // Clean up.
+  delete tp;
+}
+
+// Test the I-CSCF can handle an originating message where we can't parse the public ID
+TEST_F(ICSCFSproutletTest, ICSCFHandlesOrigInvalid)
+{
+  pjsip_tx_data* tdata;
+
+  // Create a TCP connection to the I-CSCF listening port.
+  TransportFlow* tp = new TransportFlow(TransportFlow::Protocol::TCP,
+                                        ICSCF_PORT,
+                                        "1.2.3.4",
+                                        49152);
+
+  // Inject a SIP MESSAGE.
+  Message msg1;
+  msg1._first_hop = true;
+  msg1._method = "MESSAGE";
+  msg1._requri = "urn:service:sos";
+  msg1._extra += "P-Served-User: <urn:service:sos>";
+  msg1._route = "Route: <sip:homedomain;orig>";
+  inject_msg(msg1.get_request(), tp);
+
+  // As the message is originating the I-CSCF will attempt to get the subscriber
+  // details based on the P-Served-User - as this an invalid URI to be in the
+  // the HSS the MESSAGE should be rejected.
+  tdata = current_txdata();
+  RespMatcher(400).matches(tdata->msg);
+  tp->expect_target(tdata);
+  free_txdata();
+
+  // Clean up.
+  delete tp;
+}
+
+// Test the I-CSCF can handle a REGISTER where we can't parse the public ID
+TEST_F(ICSCFSproutletTest, ICSCFHandlesRegInvalid)
+{
+  pjsip_tx_data* tdata;
+
+  // Create a TCP connection to the I-CSCF listening port.
+  TransportFlow* tp = new TransportFlow(TransportFlow::Protocol::TCP,
+                                        ICSCF_PORT,
+                                        "1.2.3.4",
+                                        49152);
+
+  // Inject a SIP MESSAGE.
+  Message msg1;
+  msg1._first_hop = true;
+  msg1._method = "REGISTER";
+  msg1._requri = "sip:homedomain";
+  msg1._full_to_header = "To: <urn:service:sos>";
+  msg1._route = "Route: <sip:homedomain>";
+  inject_msg(msg1.get_request(), tp);
+
+  // As this is a REGISTER the I-CSCF will attempt to get the subscriber
+  // details based on the To header - as this an invalid URI to be in the
+  // the HSS the MESSAGE should be rejected.
+  tdata = current_txdata();
+  RespMatcher(400).matches(tdata->msg);
+  tp->expect_target(tdata);
+  free_txdata();
+
+  // Clean up.
+  delete tp;
+}
+
+// Test the I-CSCF can handle a message where we can't parse the public ID after an ENUM lookup
+TEST_F(ICSCFSproutletTest, ICSCFHandlesEnumInvalid)
+{
+  pjsip_tx_data* tdata;
+
+  // Create a TCP connection to the I-CSCF listening port.
+  TransportFlow* tp = new TransportFlow(TransportFlow::Protocol::TCP,
+                                        ICSCF_PORT,
+                                        "1.2.3.4",
+                                        49152);
+
+  // Inject an INVITE request to a tel URI with a P-Served-User header.
+  Message msg1;
+  msg1._first_hop = true;
+  msg1._method = "MESSAGE";
+  msg1._toscheme = "tel";
+  msg1._to = "+1661000000";
+  msg1._todomain = "";
+  msg1._route = "Route: <sip:homedomain>";
+  inject_msg(msg1.get_request(), tp);
+
+  // The ENUM rule means that the MESSAGE should be routed to urn:services:sos
+  // - as this is an invalid URI to route on the MESSAGE should be rejected.
+  tdata = current_txdata();
+  RespMatcher(400).matches(tdata->msg);
+  tp->expect_target(tdata);
+  free_txdata();
+
+  // Clean up.
   delete tp;
 }

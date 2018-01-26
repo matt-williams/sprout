@@ -22,7 +22,6 @@
 #include "uri_classifier.h"
 #include "wildcard_utils.h"
 #include "associated_uris.h"
-#include "mmfservice.h"
 #include "scscf_utils.h"
 
 // Constant indicating there is no served user for a request.
@@ -35,8 +34,6 @@ SCSCFSproutlet::SCSCFSproutlet(const std::string& name,
                                const std::string& scscf_node_uri,
                                const std::string& icscf_uri,
                                const std::string& bgcf_uri,
-                               const std::string& mmf_cluster_uri,
-                               const std::string& mmf_node_uri,
                                int port,
                                const std::string& uri,
                                const std::string& network_function,
@@ -49,7 +46,6 @@ SCSCFSproutlet::SCSCFSproutlet(const std::string& name,
                                SNMP::SuccessFailCountByRequestTypeTable* incoming_sip_transactions_tbl,
                                SNMP::SuccessFailCountByRequestTypeTable* outgoing_sip_transactions_tbl,
                                bool override_npdi,
-                               MMFService* mmfservice,
                                FIFCService* fifcservice,
                                IFCConfiguration ifc_configuration,
                                int session_continued_timeout_ms,
@@ -69,8 +65,6 @@ SCSCFSproutlet::SCSCFSproutlet(const std::string& name,
   _scscf_node_uri(NULL),
   _icscf_uri(NULL),
   _bgcf_uri(NULL),
-  _mmf_cluster_uri(NULL),
-  _mmf_node_uri(NULL),
   _next_hop_service(next_hop_service),
   _sdm(sdm),
   _remote_sdms(remote_sdms),
@@ -78,7 +72,6 @@ SCSCFSproutlet::SCSCFSproutlet(const std::string& name,
   _enum_service(enum_service),
   _acr_factory(acr_factory),
   _override_npdi(override_npdi),
-  _mmfservice(mmfservice),
   _fifcservice(fifcservice),
   _ifc_configuration(ifc_configuration),
   _session_continued_timeout_ms(session_continued_timeout_ms),
@@ -87,8 +80,6 @@ SCSCFSproutlet::SCSCFSproutlet(const std::string& name,
   _scscf_node_uri_str(scscf_node_uri),
   _icscf_uri_str(icscf_uri),
   _bgcf_uri_str(bgcf_uri),
-  _mmf_cluster_uri_str(mmf_cluster_uri),
-  _mmf_node_uri_str(mmf_node_uri),
   _sess_term_as_tracker(sess_term_as_tracker),
   _sess_cont_as_tracker(sess_cont_as_tracker)
 {
@@ -129,8 +120,6 @@ bool SCSCFSproutlet::init()
   TRC_DEBUG("  S-CSCF node URI    = %s", _scscf_node_uri_str.c_str());
   TRC_DEBUG("  I-CSCF URI         = %s", _icscf_uri_str.c_str());
   TRC_DEBUG("  BGCF URI           = %s", _bgcf_uri_str.c_str());
-  TRC_DEBUG("  MMF cluster URI    = %s", _mmf_cluster_uri_str.c_str());
-  TRC_DEBUG("  MMF node URI       = %s", _mmf_node_uri_str.c_str());
 
   bool init_success = true;
 
@@ -177,26 +166,6 @@ bool SCSCFSproutlet::init()
       init_success = false;
       // LCOV_EXCL_STOP
     }
-  }
-
-  _mmf_cluster_uri = PJUtils::uri_from_string(_mmf_cluster_uri_str, stack_data.pool, false);
-
-  if (_mmf_cluster_uri == NULL)
-  {
-    // LCOV_EXCL_START - Don't test pjsip URI failures in the S-CSCF UTs
-    TRC_ERROR("Invalid MMF cluster URI %s", _mmf_cluster_uri_str.c_str());
-    init_success = false;
-    // LCOV_EXCL_STOP
-  }
-
-  _mmf_node_uri = PJUtils::uri_from_string(_mmf_node_uri_str, stack_data.pool, false);
-
-  if (_mmf_node_uri == NULL)
-  {
-    // LCOV_EXCL_START - Don't test pjsip URI failures in the S-CSCF UTs
-    TRC_ERROR("Invalid MMF node URI %s", _mmf_node_uri_str.c_str());
-    init_success = false;
-    // LCOV_EXCL_STOP
   }
 
   // Create an AS Chain table for maintaining the mapping from ODI tokens to
@@ -255,30 +224,11 @@ const pjsip_uri* SCSCFSproutlet::bgcf_uri() const
 }
 
 
-/// Returns the configured MMF cluster URI for this system.
-const pjsip_uri* SCSCFSproutlet::mmf_cluster_uri() const
-{
-  return _mmf_cluster_uri;
-}
-
-
-/// Returns the configured MMF node URI for this system.
-const pjsip_uri* SCSCFSproutlet::mmf_node_uri() const
-{
-  return _mmf_node_uri;
-}
-
-
 /// Returns the AS chain table object used to manage AS chains and the
 /// associated ODI tokens.
 AsChainTable* SCSCFSproutlet::as_chain_table() const
 {
   return _as_chain_table;
-}
-
-MMFService* SCSCFSproutlet::mmfservice() const
-{
-  return _mmfservice;
 }
 
 FIFCService* SCSCFSproutlet::fifcservice() const
@@ -306,6 +256,11 @@ void SCSCFSproutlet::get_bindings(const std::string& aor,
   if ((*aor_pair == NULL) ||
       (!(*aor_pair)->current_contains_bindings()))
   {
+    // scan-build currently detects this loop as double freeing memory, as it
+    // doesn't recognise that the value of aor_pair changes each loop iteration.
+    // Excluding from analysis while this bug is present
+    // (https://bugs.llvm.org/show_bug.cgi?id=18222).
+    #ifndef __clang_analyzer__
     std::vector<SubscriberDataManager*>::iterator it = _remote_sdms.begin();
 
     while ((it != _remote_sdms.end()) &&
@@ -320,6 +275,7 @@ void SCSCFSproutlet::get_bindings(const std::string& aor,
 
       ++it;
     }
+    #endif
   }
 
   // TODO - Log bindings to SAS
@@ -340,56 +296,31 @@ void SCSCFSproutlet::remove_binding(const std::string& aor,
                                      aor,
                                      binding_id,
                                      HSSConnection::DEREG_TIMEOUT,
+                                     SubscriberDataManager::EventTrigger::TIMEOUT,
                                      trail);
 }
 
 
-/// Read data for a public user identity from the HSS.
-long SCSCFSproutlet::read_hss_data(const std::string& public_id,
-                                   const std::string& private_id,
-                                   const std::string& req_type,
-                                   const std::string& scscf_uri,
-                                   bool cache_allowed,
-                                   bool& registered,
-                                   bool& barred,
-                                   std::string& default_uri,
-                                   std::vector<std::string>& uris,
-                                   std::vector<std::string>& aliases,
-                                   Ifcs& ifcs,
-                                   std::deque<std::string>& ccfs,
-                                   std::deque<std::string>& ecfs,
-                                   const std::string& wildcard,
-                                   SAS::TrailId trail)
+/// Read data from the HSS and store in member fields for sproutlet.
+long SCSCFSproutletTsx::read_hss_data(const HSSConnection::irs_query& irs_query,
+                                      HSSConnection::irs_info& irs_info,
+                                      SAS::TrailId trail)
 {
-  AssociatedURIs associated_uris = {};
-  std::string regstate;
-  std::map<std::string, Ifcs> ifc_map;
+  long http_code = _scscf->_hss->update_registration_state(irs_query,
+                                                           irs_info,
+                                                           trail);
 
-  long http_code = _hss->update_registration_state(public_id,
-                                                   private_id,
-                                                   req_type,
-                                                   regstate,
-                                                   scscf_uri,
-                                                   ifc_map,
-                                                   associated_uris,
-                                                   aliases,
-                                                   ccfs,
-                                                   ecfs,
-                                                   cache_allowed,
-                                                   wildcard,
-                                                   trail);
   if (http_code == HTTP_OK)
   {
-    ifcs = ifc_map[public_id];
+    _ifcs = irs_info._service_profiles[irs_query._public_id];
 
     // Get the default URI. This should always succeed.
-    associated_uris.get_default_impu(default_uri, true);
+    irs_info._associated_uris.get_default_impu(_default_uri, true);
 
     // We may want to route to bindings that are barred (in case of an
     // emergency), so get all the URIs.
-    uris = associated_uris.get_all_uris();
-    registered = (regstate == RegDataXMLUtils::STATE_REGISTERED);
-    barred = associated_uris.is_impu_barred(public_id);
+    _registered = (irs_info._regstate == RegDataXMLUtils::STATE_REGISTERED);
+    _barred = irs_info._associated_uris.is_impu_barred(irs_query._public_id);
   }
 
   return http_code;
@@ -477,7 +408,6 @@ SCSCFSproutletTsx::SCSCFSproutletTsx(SCSCFSproutlet* scscf,
   _registered(false),
   _barred(false),
   _default_uri(""),
-  _uris(),
   _ifcs(),
   _in_dialog_acr(NULL),
   _failed_ood_acr(NULL),
@@ -565,7 +495,9 @@ void SCSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
                                                            PJSIP_H_PROXY_AUTHORIZATION,
                                                            NULL);
       _impi = PJUtils::extract_username(proxy_auth_hdr,
-                                        PJUtils::orig_served_user(req));
+                                        PJUtils::orig_served_user(req,
+                                                                  get_pool(req),
+                                                                  trail()));
     }
   }
 
@@ -694,7 +626,7 @@ void SCSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
     // Add a P-Charging-Function-Addresses header if one is not already present
     // for some reason. We only do this if we have the charging addresses cached
     // (which we should do).
-    PJUtils::add_pcfa_header(req, get_pool(req), _ccfs, _ecfs, false);
+    PJUtils::add_pcfa_header(req, get_pool(req), _irs_info._ccfs, _irs_info._ecfs, false);
 
     // Add a second P-Asserted-Identity header if required on originating calls.
     // See 3GPP TS24.229, 5.4.3.2.
@@ -720,12 +652,24 @@ void SCSCFSproutletTsx::on_rx_initial_request(pjsip_msg* req)
     else
     {
       // No AS chain set, so don't apply services to the request.
-      // Default action will be to try to route following remaining Route
-      // headers or to the RequestURI.
-      TRC_INFO("Route request without applying services");
-      SAS::Event no_as_route(trail(), SASEvent::NO_AS_CHAIN_ROUTE, 0);
-      SAS::report_event(no_as_route);
-      send_request(req);
+      // Check whether the next hop is a routeable URI
+      pjsip_uri_context_e context;
+      pjsip_uri* next_uri = PJUtils::get_next_routing_uri(req, &context);
+      URIClass uri_class = URIClassifier::classify_uri(next_uri);
+
+      if (uri_class != UNKNOWN)
+      {
+        TRC_INFO("Route request without applying services");
+        SAS::Event no_as_route(trail(), SASEvent::NO_AS_CHAIN_ROUTE, 0);
+        SAS::report_event(no_as_route);
+        send_request(req);
+      }
+      else
+      {
+        // Invalid URI, so just reject the request
+        std::string uri_str = PJUtils::uri_to_string(context, next_uri);
+        reject_invalid_uri(req, uri_str);
+      }
     }
   }
 }
@@ -833,7 +777,7 @@ void SCSCFSproutletTsx::on_rx_response(pjsip_msg* rsp, int fork_id)
     // Final response. Add a P-Charging-Function-Addresses header if one is
     // not already present for some reason. We only do this if we have
     // the charging addresses cached (which we should do).
-    PJUtils::add_pcfa_header(rsp, get_pool(rsp), _ccfs, _ecfs, false);
+    PJUtils::add_pcfa_header(rsp, get_pool(rsp), _irs_info._ccfs, _irs_info._ecfs, false);
   }
 
   if ((st_code < 300) && (_session_case->is_terminating()))
@@ -870,6 +814,9 @@ void SCSCFSproutletTsx::on_rx_response(pjsip_msg* rsp, int fork_id)
           // handling is set to continue.
           TRC_DEBUG("Trigger default_handling=CONTINUE processing");
           SAS::Event bypass_As(trail(), SASEvent::BYPASS_AS, 1);
+          bypass_As.add_var_param(st_code == PJSIP_SC_REQUEST_TIMEOUT ?
+                                  "Timed out waiting for response to INVITE request from AS" :
+                                  "AS returned 5xx response");
           SAS::report_event(bypass_As);
 
           _as_chain_link = _as_chain_link.next();
@@ -1042,20 +989,8 @@ void SCSCFSproutletTsx::retrieve_odi_and_sesscase(pjsip_msg* req)
     // we'll log an ICID marker to correlate the trails.
     if (!_as_chain_link.is_set())
     {
-      pjsip_p_c_v_hdr* pcv = (pjsip_p_c_v_hdr*)pjsip_msg_find_hdr_by_name(req,
-                                                                          &STR_P_C_V,
-                                                                          NULL);
-      if (pcv)
-      {
-        TRC_DEBUG("No ODI token, or invalid ODI token, on request - logging ICID marker %.*s for B2BUA AS correlation", pcv->icid.slen, pcv->icid.ptr);
-        SAS::Marker icid_marker(trail(), MARKER_ID_IMS_CHARGING_ID, 1u);
-        icid_marker.add_var_param(pcv->icid.slen, pcv->icid.ptr);
-        SAS::report_marker(icid_marker, SAS::Marker::Scope::Trace);
-      }
-      else
-      {
-        TRC_DEBUG("No ODI token, or invalid ODI token, on request, and no P-Charging-Vector header (so can't log ICID for correlation)");
-      }
+      TRC_DEBUG("No ODI token, or invalid ODI token, on request");
+      PJUtils::mark_icid(trail(), req);
     }
 
     TRC_DEBUG("Got our Route header, session case %s, OD=%s",
@@ -1292,10 +1227,14 @@ pjsip_status_code SCSCFSproutletTsx::determine_served_user(pjsip_msg* req)
       // transaction, using the configured S-CSCF URI as a starting point.
       pjsip_sip_uri* scscf_uri = (pjsip_sip_uri*)pjsip_uri_clone(get_pool(req), _scscf->_scscf_cluster_uri);
       pjsip_sip_uri* routing_uri = get_routing_uri(req);
-      SCSCFUtils::get_scscf_uri(get_pool(req),
-                                get_local_hostname(routing_uri),
-                                get_local_hostname(scscf_uri),
-                                scscf_uri);
+      if (routing_uri != NULL)
+      {
+        SCSCFUtils::get_scscf_uri(get_pool(req),
+                                  get_local_hostname(routing_uri),
+                                  get_local_hostname(scscf_uri),
+                                  scscf_uri);
+      }
+
       _scscf_uri = PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR, (pjsip_uri*)scscf_uri);
 
       TRC_DEBUG("Looking up iFCs for %s for new AS chain", served_user.c_str());
@@ -1376,7 +1315,7 @@ std::string SCSCFSproutletTsx::served_user_from_msg(pjsip_msg* msg)
 
   if (_session_case->is_originating())  // (includes orig-cdiv)
   {
-    uri = PJUtils::orig_served_user(msg);
+    uri = PJUtils::orig_served_user(msg, get_pool(msg), trail());
   }
   else
   {
@@ -1514,19 +1453,35 @@ void SCSCFSproutletTsx::apply_originating_services(pjsip_msg* req)
         SAS::report_event(event);
         route_to_bgcf(req);
       }
-      else
+      else if (uri_class != UNKNOWN)
       {
         // Destination is on-net so route to the I-CSCF.
         route_to_icscf(req);
+      }
+      else
+      {
+        // Non-sip: or -tel: URI is invalid at this point, so just reject the request
+        reject_invalid_uri(req, new_uri_str);
       }
     }
     else
     {
       // ENUM is not configured so we have no way to tell if this request is
-      // on-net or off-net. Route it to the I-CSCF, which should be able to
-      // look it up in the HSS.
-      TRC_DEBUG("No ENUM lookup available - routing to I-CSCF");
-      route_to_icscf(req);
+      // on-net or off-net. If it's to a valid sip: or tel: URI, route it to the
+      // I-CSCF, which should be able to look it up in the HSS.
+      URIClass uri_class = URIClassifier::classify_uri(req->line.req.uri, true, false);
+
+      if (uri_class != UNKNOWN)
+      {
+        TRC_DEBUG("No ENUM lookup available - routing to I-CSCF");
+        route_to_icscf(req);
+      }
+      else
+      {
+        // Invalid URI, so just reject the request
+        std::string uri_str = PJUtils::uri_to_string(PJSIP_URI_IN_REQ_URI, req->line.req.uri);
+        reject_invalid_uri(req, uri_str);
+      }
     }
   }
 }
@@ -1644,66 +1599,8 @@ void SCSCFSproutletTsx::route_to_as(pjsip_msg* req, const std::string& server_na
 
     PJUtils::add_top_route_header(req, odi_uri, get_pool(req));
 
-    // Obtain the domain of the AS, to check whether we are configured to
-    // perform MMF on the request.
-    pj_str_t server_domain = PJUtils::domain_from_uri(server_name, get_pool(req));
-    std::string server_domain_str = PJUtils::pj_str_to_string(&server_domain);
-
-    TRC_DEBUG("Attempting to obtain MMF config for %s", server_domain_str.c_str());
-
-    // Try to obtain the MMF config for the server.
-    // Returns a nullptr if there is no config for the server.
-    MMFService::MMFTargetPtr server_mmf_config =
-                _scscf->mmfservice()->get_config_for_server(server_domain_str);
-
-    // If we are configured to apply MMF on requests forwarded on by the AS,
-    // add the necessary route header to the top of the request.
-    if (server_mmf_config && server_mmf_config->should_apply_mmf_post_as())
-    {
-      TRC_DEBUG("Forming post-AS MMF uri");
-      pjsip_sip_uri* post_as_uri = (pjsip_sip_uri*)
-                        pjsip_uri_clone(get_pool(req), _scscf->mmf_node_uri());
-      add_mmf_uri_parameters(post_as_uri,
-                             as_uri->transport_param,
-                             "post-as",
-                             server_mmf_config->get_target_name(),
-                             get_pool(req));
-
-      TRC_DEBUG("Adding top route header for post-AS MMF");
-
-      SAS::Event invoke_mmf(trail(), SASEvent::MMF_INVOKE_AFTER_AS, 0);
-      invoke_mmf.add_var_param(server_domain_str);
-      invoke_mmf.add_var_param(server_mmf_config->get_target_name());
-      SAS::report_event(invoke_mmf);
-
-      PJUtils::add_top_route_header(req, post_as_uri, get_pool(req));
-    }
-
     // Add the application server URI as the top Route header, per TS 24.229.
     PJUtils::add_top_route_header(req, as_uri, get_pool(req));
-
-    // If we are configured to apply MMF prior to forwarding the request to
-    // the AS, add the necessary route header to the top of the request.
-    if (server_mmf_config && server_mmf_config->should_apply_mmf_pre_as())
-    {
-      TRC_DEBUG("Forming pre-AS MMF uri");
-      pjsip_sip_uri* pre_as_uri = (pjsip_sip_uri*)
-                                pjsip_uri_clone(get_pool(req), _scscf->mmf_cluster_uri());
-
-      add_mmf_uri_parameters(pre_as_uri,
-                             as_uri->transport_param,
-                             "pre-as",
-                             server_mmf_config->get_target_name(),
-                             get_pool(req));
-
-      SAS::Event invoke_mmf(trail(), SASEvent::MMF_INVOKE_BEFORE_AS, 0);
-      invoke_mmf.add_var_param(server_domain_str);
-      invoke_mmf.add_var_param(server_mmf_config->get_target_name());
-      SAS::report_event(invoke_mmf);
-
-      TRC_DEBUG("Adding top route header for pre-as MMF");
-      PJUtils::add_top_route_header(req, pre_as_uri, get_pool(req));
-    }
 
     // Set P-Served-User, including session case and registration
     // state, per RFC5502 and the extension in 3GPP TS 24.229
@@ -2002,27 +1899,21 @@ void SCSCFSproutletTsx::route_to_ue_bindings(pjsip_msg* req)
 long SCSCFSproutletTsx::get_data_from_hss(std::string public_id)
 {
   long http_code = HTTP_OK;
+
+  // Read IRS information from HSS if not previously cached.
   if (!_hss_data_cached)
   {
-    std::string req_type = _auto_reg ? HSSConnection::REG : HSSConnection::CALL;
-    bool cache_allowed = !_auto_reg;
+    HSSConnection::irs_query irs_query;
+    irs_query._public_id = public_id;
+    irs_query._private_id =_impi;
+    irs_query._req_type = _auto_reg ? HSSConnection::REG : HSSConnection::CALL;
+    irs_query._server_name = _scscf_uri;
+    irs_query._wildcard = _wildcard;
+    irs_query._cache_allowed = !_auto_reg;
 
-    // We haven't previous read data from the HSS, so read it now.
-    http_code = _scscf->read_hss_data(public_id,
-                                      _impi,
-                                      req_type,
-                                      _scscf_uri,
-                                      cache_allowed,
-                                      _registered,
-                                      _barred,
-                                      _default_uri,
-                                      _uris,
-                                      _aliases,
-                                      _ifcs,
-                                      _ccfs,
-                                      _ecfs,
-                                      _wildcard,
-                                      trail());
+    http_code = read_hss_data(irs_query,
+                              _irs_info,
+                              trail());
 
     if (http_code == HTTP_OK)
     {
@@ -2052,7 +1943,7 @@ bool SCSCFSproutletTsx::get_associated_uris(std::string public_id,
   long http_code = get_data_from_hss(public_id);
   if (http_code == HTTP_OK)
   {
-    uris = _uris;
+    uris = _irs_info._associated_uris.get_all_uris();
   }
   return (http_code == HTTP_OK);
 }
@@ -2067,7 +1958,7 @@ bool SCSCFSproutletTsx::get_aliases(std::string public_id,
   long http_code = get_data_from_hss(public_id);
   if (http_code == HTTP_OK)
   {
-    aliases = _aliases;
+    aliases = _irs_info._aliases;
   }
   return (http_code == HTTP_OK);
 }
@@ -2230,20 +2121,20 @@ bool SCSCFSproutletTsx::get_billing_role(ACR::NodeRole &role)
       }
       else
       {
-        TRC_WARNING("Unknown charging role %.*s, assume originating",
-                    param->value.slen, param->value.ptr);
+        TRC_INFO("Unknown charging role %.*s, assume originating",
+                 param->value.slen, param->value.ptr);
         role = ACR::NODE_ROLE_ORIGINATING;
       }
     }
     else
     {
-      TRC_WARNING("No charging role in Route header, assume originating");
+      TRC_INFO("No charging role in Route header, assume originating");
       role = ACR::NODE_ROLE_ORIGINATING;
     }
   }
   else
   {
-    TRC_WARNING("Cannot determine charging role as no Route header, assume originating");
+    TRC_INFO("Cannot determine charging role as no Route header, assume originating");
     role = ACR::NODE_ROLE_ORIGINATING;
   }
 
@@ -2265,7 +2156,8 @@ void SCSCFSproutletTsx::on_timer_expiry(void* context)
 
     // The request was routed to a downstream AS, so cancel any outstanding
     // forks.
-    cancel_pending_forks();
+    cancel_pending_forks(PJSIP_SC_REQUEST_TIMEOUT, "AS liveness timer expired");
+    mark_pending_forks_as_abandoned();
 
     if (_as_chain_link.default_handling() == SESSION_CONTINUED)
     {
@@ -2273,6 +2165,7 @@ void SCSCFSproutletTsx::on_timer_expiry(void* context)
       // handling is set to continue.
       TRC_DEBUG("Trigger default_handling=CONTINUED processing");
       SAS::Event bypass_as(trail(), SASEvent::BYPASS_AS, 0);
+      bypass_as.add_var_param("AS liveness timer expired");
       SAS::report_event(bypass_as);
 
       _as_chain_link = _as_chain_link.next();
@@ -2354,9 +2247,9 @@ void SCSCFSproutletTsx::add_second_p_a_i_hdr(pjsip_msg* msg)
       // If the SIP URI has a alias tel URI with the same username we add this
       // tel URI to the P-Asserted-Identity header. If not we select the first
       // tel URI in the alias list to add to the P-Asserted-Identity header.
-      if (find(_aliases.begin(),
-               _aliases.end(),
-               new_p_a_i_str) != _aliases.end())
+      if (find(_irs_info._aliases.begin(),
+               _irs_info._aliases.end(),
+               new_p_a_i_str) != _irs_info._aliases.end())
       {
         TRC_DEBUG("Add second P-Asserted-Identity for %s", new_p_a_i_str.c_str());
         PJUtils::add_asserted_identity(msg,
@@ -2366,18 +2259,16 @@ void SCSCFSproutletTsx::add_second_p_a_i_hdr(pjsip_msg* msg)
       }
       else
       {
-        for (std::vector<std::string>::iterator alias = _aliases.begin();
-             alias != _aliases.end();
-             ++alias)
+        for (std::string alias : _irs_info._aliases)
         {
           std::string tel_URI_prefix = "tel:";
-          bool has_tel_prefix = (alias->rfind(tel_URI_prefix.c_str(), 4) != std::string::npos);
+          bool has_tel_prefix = (alias.rfind(tel_URI_prefix.c_str(), 4) != std::string::npos);
           if (has_tel_prefix)
           {
-            TRC_DEBUG("Add second P-Asserted Identity for %s", alias->c_str());
+            TRC_DEBUG("Add second P-Asserted Identity for %s", alias.c_str());
             PJUtils::add_asserted_identity(msg,
                                            get_pool(msg),
-                                           *alias,
+                                           alias,
                                            asserted_id->name_addr.display);
             break;
           }
@@ -2491,25 +2382,13 @@ pjsip_msg* SCSCFSproutletTsx::get_base_request()
   }
 }
 
-
-void SCSCFSproutletTsx::add_mmf_uri_parameters(pjsip_sip_uri* mmf_uri,
-                                               pj_str_t as_transport_param,
-                                               std::string mmfscope_param,
-                                               std::string mmftarget_param,
-                                               pj_pool_t* pool)
+void SCSCFSproutletTsx::reject_invalid_uri(pjsip_msg* req, const std::string& uri_str)
 {
-  // Use same transport as AS, in case it can only cope with one.
-  mmf_uri->transport_param = as_transport_param;
-
-  TRC_DEBUG("Adding mmftarget parameter %s", mmftarget_param.c_str());
-  PJUtils::add_parameter_to_sip_uri(mmf_uri,
-                                    STR_MMFTARGET,
-                                    mmftarget_param.c_str(),
-                                    pool);
-
-  TRC_DEBUG("Adding mmfscope parameter %s", mmfscope_param.c_str());
-  PJUtils::add_parameter_to_sip_uri(mmf_uri,
-                                    STR_MMFSCOPE,
-                                    mmfscope_param.c_str(),
-                                    pool);
+  TRC_DEBUG("Rejecting request to invalid URI %s", uri_str.c_str());
+  SAS::Event event(trail(), SASEvent::SCSCF_INVALID_URI, 0);
+  event.add_var_param(uri_str);
+  SAS::report_event(event);
+  pjsip_msg* rsp = create_response(req, PJSIP_SC_BAD_REQUEST);
+  send_response(rsp);
+  free_msg(req);
 }

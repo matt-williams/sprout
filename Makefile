@@ -21,7 +21,6 @@ DEB_NAMES += sprout-icscf sprout-icscf-dbg
 DEB_NAMES += sprout-bgcf sprout-bgcf-dbg
 DEB_NAMES += sprout-mmtel-as sprout-mmtel-as-dbg
 DEB_NAMES += gemini-as gemini-as-dbg
-DEB_NAMES += memento-as memento-as-dbg
 DEB_NAMES += call-diversion-as call-diversion-as-dbg
 DEB_NAMES += mangelwurzel-as mangelwurzel-as-dbg
 DEB_NAMES += bono bono-dbg restund
@@ -32,7 +31,7 @@ DEB_NAMES += clearwater-sip-stress clearwater-sip-stress-stats clearwater-sip-pe
 INCLUDE_DIR := ${INSTALL_DIR}/include
 LIB_DIR := ${INSTALL_DIR}/lib
 
-SUBMODULES := pjsip c-ares curl libevhtp libmemcached libre restund openssl websocketpp sipp sas-client thrift cassandra rlite
+SUBMODULES := pjsip c-ares curl libevhtp libmemcached libre restund openssl websocketpp sipp sas-client thrift rlite
 
 include build-infra/cw-module-install.mk
 
@@ -100,7 +99,7 @@ endef
 
 # Define the possible make targets for the plugins and generate the makefile
 # rules.
-PLUGIN_TARGETS := build test clean deb deb-only
+PLUGIN_TARGETS := build test clean deb-only
 $(foreach target,$(PLUGIN_TARGETS),$(eval $(call plugin_target_template,$(target))))
 
 #
@@ -111,7 +110,7 @@ include build-infra/cw-deb.mk
 deb-only: plugins-deb-only
 
 .PHONY: deb
-deb: build plugins-deb deb-only
+deb: build deb-only
 
 .PHONY: all build test clean distclean
 

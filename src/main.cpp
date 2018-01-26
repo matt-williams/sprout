@@ -94,16 +94,13 @@ enum OptionTypes
   OPT_ADDITIONAL_HOME_DOMAINS,
   OPT_EMERGENCY_REG_ACCEPTED,
   OPT_SUB_MAX_EXPIRES,
-  OPT_MAX_CALL_LIST_LENGTH,
-  OPT_MEMENTO_THREADS,
-  OPT_CALL_LIST_TTL,
   OPT_DNS_SERVER,
   OPT_TARGET_LATENCY_US,
   OPT_OVERRIDE_NPDI,
   OPT_MAX_TOKENS,
   OPT_INIT_TOKEN_RATE,
   OPT_MIN_TOKEN_RATE,
-  OPT_CASS_TARGET_LATENCY_US,
+  OPT_MAX_TOKEN_RATE,
   OPT_EXCEPTION_MAX_TTL,
   OPT_MAX_SESSION_EXPIRES,
   OPT_SIP_BLACKLIST_DURATION,
@@ -121,7 +118,6 @@ enum OptionTypes
   OPT_PBX_SERVICE_ROUTE,
   OPT_NON_REGISTER_AUTHENTICATION,
   OPT_FORCE_THIRD_PARTY_REGISTER_BODY,
-  OPT_MEMENTO_NOTIFY_URL,
   OPT_PIDFILE,
   OPT_SPROUT_HOSTNAME,
   OPT_LISTEN_PORT,
@@ -141,8 +137,11 @@ enum OptionTypes
   OPT_DUMMY_APP_SERVER,
   OPT_HTTP_ACR_LOGGING,
   OPT_HOMESTEAD_TIMEOUT,
+  OPT_ORIG_SIP_TO_TEL_COERCE,
+  OPT_REQUEST_ON_QUEUE_TIMEOUT,
+  OPT_BLACKLISTED_SCSCFS,
   OPT_RINA_LOCAL_APPL,
-  OPT_RINA_REMOTE_APPL,
+  OPT_RINA_REMOTE_APPL
 };
 
 
@@ -188,10 +187,6 @@ const static struct pj_getopt_option long_opt[] =
   { "http-threads",                 required_argument, 0, 'q'},
   { "billing-cdf",                  required_argument, 0, 'B'},
   { "allow-emergency-registration", no_argument,       0, OPT_EMERGENCY_REG_ACCEPTED},
-  { "max-call-list-length",         required_argument, 0, OPT_MAX_CALL_LIST_LENGTH},
-  { "memento-threads",              required_argument, 0, OPT_MEMENTO_THREADS},
-  { "call-list-ttl",                required_argument, 0, OPT_CALL_LIST_TTL},
-  { "memento-notify-url",           required_argument, 0, OPT_MEMENTO_NOTIFY_URL},
   { "log-level",                    required_argument, 0, 'L'},
   { "daemon",                       no_argument,       0, 'd'},
   { "interactive",                  no_argument,       0, 't'},
@@ -200,7 +195,7 @@ const static struct pj_getopt_option long_opt[] =
   { "max-tokens",                   required_argument, 0, OPT_MAX_TOKENS},
   { "init-token-rate",              required_argument, 0, OPT_INIT_TOKEN_RATE},
   { "min-token-rate",               required_argument, 0, OPT_MIN_TOKEN_RATE},
-  { "cass-target-latency-us",       required_argument, 0, OPT_CASS_TARGET_LATENCY_US},
+  { "max-token-rate",               required_argument, 0, OPT_MAX_TOKEN_RATE},
   { "exception-max-ttl",            required_argument, 0, OPT_EXCEPTION_MAX_TTL},
   { "sip-blacklist-duration",       required_argument, 0, OPT_SIP_BLACKLIST_DURATION},
   { "http-blacklist-duration",      required_argument, 0, OPT_HTTP_BLACKLIST_DURATION},
@@ -232,6 +227,9 @@ const static struct pj_getopt_option long_opt[] =
   { "dummy-app-server",             required_argument, 0, OPT_DUMMY_APP_SERVER},
   { "http-acr-logging",             no_argument,       0, OPT_HTTP_ACR_LOGGING},
   { "homestead-timeout",            required_argument, 0, OPT_HOMESTEAD_TIMEOUT},
+  { "request-on-queue-timeout",     required_argument, 0, OPT_REQUEST_ON_QUEUE_TIMEOUT},
+  { "blacklisted-scscfs",           required_argument, 0, OPT_BLACKLISTED_SCSCFS},
+  { "enable-orig-sip-to-tel-coerce",no_argument,       0, OPT_ORIG_SIP_TO_TEL_COERCE},
   { "rina-local-appl",              required_argument, 0, OPT_RINA_LOCAL_APPL},
   { "rina-remote-appl",             required_argument, 0, OPT_RINA_REMOTE_APPL},
   { NULL,                           0,                 0, 0}
@@ -337,15 +335,17 @@ static void usage(void)
        "                            (in seconds. Min 90. Defaults to 600)\n"
        "     --target-latency-us <usecs>\n"
        "                            Target latency above which throttling applies (default: 100000)\n"
-       "     --cass-target-latency-us <usecs>\n"
-       "                            Target latency above which throttling applies for the Cassandra store\n"
-       "                            that's part of the Memento application server (default: 1000000)\n"
        "     --max-tokens N         Maximum number of tokens allowed in the token bucket (used by\n"
        "                            the throttling code (default: 1000))\n"
        "     --init-token-rate N    Initial token refill rate of tokens in the token bucket (used by\n"
        "                            the throttling code (default: 100.0))\n"
        "     --min-token-rate N     Minimum token refill rate of tokens in the token bucket (used by\n"
        "                            the throttling code (default: 10.0))\n"
+       "     --max-token-rate N     Maximum token refill rate of tokens in the token bucket (used by\n"
+       "                            the throttling code (default: 0.0 - no maximum))\n"
+       "     --request-queue-timeout <msecs>\n"
+       "                            Maximum time a request can be waiting to be processed before it\n"
+       "                            is rejected (used by the throttling code (default: 4000))\n"
        " -T  --http-address <server>\n"
        "                            Specify the HTTP bind address\n"
        " -o  --http-port <port>     Specify the HTTP bind port\n"
@@ -365,10 +365,7 @@ static void usage(void)
        "     --max-call-list-length N\n"
        "                            Maximum number of complete call list entries to store. If this is 0,\n"
        "                            then there is no limit (default: 0)\n"
-       "     --memento-threads N    Number of Memento threads (default: 25)\n"
        "     --call-list-ttl N      Time to store call lists entries (default: 604800)\n"
-       "     --memento-notify-url <url>\n"
-       "                            URL Memento should notify when call lists change.\n"
        "     --alarms-enabled       Whether SNMP alarms are enabled (default: false)\n"
        "     --override-npdi        Whether the deployment should check for number portability data on \n"
        "                            requests that already have the 'npdi' indicator (default: false)\n"
@@ -386,6 +383,9 @@ static void usage(void)
        "     --sip-tcp-send-timeout <milliseconds>\n"
        "                            The amount of time to wait for data sent on a SIP TCP connection to be\n"
        "                            acknowledged by the peer.\n"
+       "     --enable-orig-sip-to-tel-coerce\n"
+       "                            Whether to treat originating SIP URIs that correspond to global phone\n"
+       "                            numbers as Tel URIs.\n"
        "     --dns-timeout <milliseconds>\n"
        "                            The amount of time to wait for a DNS response (default: 200)n"
        "     --session-continued-timeout <milliseconds>\n"
@@ -450,6 +450,7 @@ static void usage(void)
        "     --http-acr-logging     Whether to include the bodies of ACR HTTP requests when they are logged \n"
        "                            to SAS\n"
        "     --homestead-timeout    The timeout in ms to use on HTTP requests to Homestead\n"
+       "     --blacklisted-scscfs   List of URIs of blacklisted S-CSCFs\n"
        " -N, --plugin-option <plugin>,<name>,<value>\n"
        "                            Provide an option value to a plugin.\n"
        " -F, --log-file <directory>\n"
@@ -859,14 +860,6 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       }
       break;
 
-    case OPT_CASS_TARGET_LATENCY_US:
-      {
-        VALIDATE_INT_PARAM_NON_ZERO(options->cass_target_latency_us,
-                                    cass_target_latency_us,
-                                    Target cassandra latency (in microseconds));
-      }
-      break;
-
     case OPT_MAX_TOKENS:
       {
         VALIDATE_INT_PARAM_NON_ZERO(options->max_tokens,
@@ -876,19 +869,18 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       break;
 
     case OPT_INIT_TOKEN_RATE:
-      {
-        VALIDATE_INT_PARAM_NON_ZERO(options->init_token_rate,
-                                    init_token_rate,
-                                    Initial token rate);
-      }
+      options->init_token_rate = std::stof(std::string(pj_optarg));
+      TRC_INFO("Initial token rate set to %s", pj_optarg);
       break;
 
     case OPT_MIN_TOKEN_RATE:
-      {
-        VALIDATE_INT_PARAM_NON_ZERO(options->min_token_rate,
-                                    min_token_rate,
-                                    Minimum token rate);
-      }
+      options->min_token_rate = std::stof(std::string(pj_optarg));
+      TRC_INFO("Minimum token rate set to %s", pj_optarg);
+      break;
+
+    case OPT_MAX_TOKEN_RATE:
+      options->max_token_rate = std::stof(std::string(pj_optarg));
+      TRC_INFO("Maximum token rate set to %s", pj_optarg);
       break;
 
     case 'W':
@@ -991,27 +983,14 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       TRC_INFO("Emergency registrations accepted");
       break;
 
-    case OPT_MAX_CALL_LIST_LENGTH:
+    case OPT_BLACKLISTED_SCSCFS:
       {
-        VALIDATE_INT_PARAM(options->max_call_list_length,
-                           max_call_list_length,
-                           Max call list length);
-      }
-      break;
-
-    case OPT_MEMENTO_THREADS:
-      {
-        VALIDATE_INT_PARAM(options->memento_threads,
-                           memento_threads,
-                           Memento threads);
-      }
-      break;
-
-    case OPT_CALL_LIST_TTL:
-      {
-        VALIDATE_INT_PARAM(options->call_list_ttl,
-                           call_list_ttl,
-                           TTL for entries in the call list);
+        std::vector<std::string> blacklisted_scscfs;
+        Utils::split_string(std::string(pj_optarg), ',', blacklisted_scscfs, 0, false);
+        options->blacklisted_scscfs.clear();
+        options->blacklisted_scscfs.insert(blacklisted_scscfs.begin(), blacklisted_scscfs.end());
+        TRC_INFO("%d blacklisted S-CSCF URIs passed on the command line: %s",
+                  options->blacklisted_scscfs.size(), pj_optarg);
       }
       break;
 
@@ -1169,12 +1148,6 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       }
       break;
 
-    case OPT_MEMENTO_NOTIFY_URL:
-      options->memento_notify_url = std::string(pj_optarg);
-      TRC_INFO("Memento notify URL set to: '%s'",
-               options->memento_notify_url.c_str());
-      break;
-
     case OPT_PIDFILE:
       options->pidfile = std::string(pj_optarg);
       TRC_INFO("Pidfile set to %s", pj_optarg);
@@ -1193,6 +1166,11 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
     case OPT_DISABLE_TCP_SWITCH:
       options->disable_tcp_switch = true;
       TRC_INFO("Switching to TCP is disabled");
+      break;
+
+    case OPT_ORIG_SIP_TO_TEL_COERCE:
+      options->enable_orig_sip_to_tel_coerce = true;
+      TRC_INFO("Treatment of user=phone orig SIP URIs as Tel URIs enabled");
       break;
 
     case 'N':
@@ -1302,6 +1280,14 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       }
       break;
 
+    case OPT_REQUEST_ON_QUEUE_TIMEOUT:
+      {
+        VALIDATE_INT_PARAM(options->request_on_queue_timeout,
+                           request_on_queue_timeout,
+                           Maximum time (in ms) a request can wait to be processed);
+      }
+      break;
+
     SPROUTLET_MACRO(SPROUTLET_OPTIONS)
 
     case 'h':
@@ -1325,17 +1311,24 @@ void signal_handler(int sig)
   signal(SIGABRT, SIG_DFL);
   signal(SIGSEGV, signal_handler);
 
-  // Log the signal, along with a backtrace.
+  // Log the signal, along with a simple backtrace.
   TRC_BACKTRACE("Signal %d caught", sig);
-
-  // Ensure the log files are complete - the core file created by abort() below
-  // will trigger the log files to be copied to the diags bundle
-  TRC_COMMIT();
 
   // Check if there's a stored jmp_buf on the thread and handle if there is
   exception_handler->handle_exception();
 
+  //
+  // If we get here it means we didn't handle the exception so we need to exit.
+  //
+
   CL_SPROUT_CRASH.log(strsignal(sig));
+
+  // Log a full backtrace to make debugging easier.
+  TRC_BACKTRACE_ADV();
+
+  // Ensure the log files are complete - the core file created by abort() below
+  // will trigger the log files to be copied to the diags bundle
+  TRC_COMMIT();
 
   // Dump a core.
   abort();
@@ -1427,7 +1420,6 @@ AnalyticsLogger* analytics_logger = NULL;
 ChronosConnection* chronos_connection = NULL;
 SIFCService* sifc_service = NULL;
 FIFCService* fifc_service = NULL;
-MMFService* mmf_service = NULL;
 
 int create_astaire_stores(struct options opt,
                           AstaireResolver*& astaire_resolver,
@@ -1524,7 +1516,7 @@ int create_astaire_stores(struct options opt,
 
   if (local_data_store == NULL)
   {
-    TRC_ERROR("Failed to connect to data store");
+    TRC_ERROR("Failed to connect to data store. Aborting startup");
     return 1;
   }
 
@@ -1655,6 +1647,7 @@ int main(int argc, char* argv[])
   CommunicationMonitor* astaire_comm_monitor = NULL;
   CommunicationMonitor* remote_astaire_comm_monitor = NULL;
   CommunicationMonitor* ralf_comm_monitor = NULL;
+  RPHService* rph_service = NULL;
 
   // Set up our exception signal handler for asserts and segfaults.
   signal(SIGABRT, signal_handler);
@@ -1693,14 +1686,11 @@ int main(int argc, char* argv[])
   opt.dns_servers.push_back("127.0.0.1");
   opt.billing_cdf = "";
   opt.emerg_reg_accepted = PJ_FALSE;
-  opt.max_call_list_length = 0;
-  opt.memento_threads = 25;
-  opt.call_list_ttl = 604800;
-  opt.target_latency_us = 100000;
-  opt.cass_target_latency_us = 1000000;
+  opt.target_latency_us = 10000;
   opt.max_tokens = 1000;
-  opt.init_token_rate = 100.0;
+  opt.init_token_rate = 2000.0;
   opt.min_token_rate = 10.0;
+  opt.max_token_rate = 2000.0;
   opt.log_to_file = PJ_FALSE;
   opt.log_level = 0;
   opt.daemon = PJ_FALSE;
@@ -1710,8 +1700,8 @@ int main(int argc, char* argv[])
   opt.sip_blacklist_duration = SIPResolver::DEFAULT_BLACKLIST_DURATION;
   opt.http_blacklist_duration = HttpResolver::DEFAULT_BLACKLIST_DURATION;
   opt.astaire_blacklist_duration = AstaireResolver::DEFAULT_BLACKLIST_DURATION;
-  opt.sip_tcp_connect_timeout = 2000;
-  opt.sip_tcp_send_timeout = 2000;
+  opt.sip_tcp_connect_timeout = 1800;
+  opt.sip_tcp_send_timeout = 1800;
   opt.dns_timeout = DnsCachedResolver::DEFAULT_TIMEOUT;
   opt.session_continued_timeout_ms = SCSCFSproutlet::DEFAULT_SESSION_CONTINUED_TIMEOUT;
   opt.session_terminated_timeout_ms = SCSCFSproutlet::DEFAULT_SESSION_TERMINATED_TIMEOUT;
@@ -1731,6 +1721,8 @@ int main(int argc, char* argv[])
   opt.dummy_app_server = "";
   opt.http_acr_logging = false;
   opt.homestead_timeout = 750;
+  opt.enable_orig_sip_to_tel_coerce = false;
+  opt.request_on_queue_timeout = 4000;
   opt.rina_local_appl = "sprout.IPCP";
   opt.rina_remote_appl = "homestead-server";
 
@@ -1907,6 +1899,7 @@ int main(int argc, char* argv[])
 
   SNMP::EventAccumulatorByScopeTable* latency_table;
   SNMP::EventAccumulatorByScopeTable* queue_size_table;
+  SNMP::SuccessFailCountByPriorityAndScopeTable* queue_success_fail_table;
   SNMP::CounterByScopeTable* requests_counter;
   SNMP::CounterByScopeTable* overload_counter;
 
@@ -1931,6 +1924,8 @@ int main(int argc, char* argv[])
                                                                ".1.2.826.0.1.1578918.9.2.2");
     queue_size_table = SNMP::EventAccumulatorByScopeTable::create("bono_queue_size",
                                                                   ".1.2.826.0.1.1578918.9.2.6");
+    queue_success_fail_table = SNMP::SuccessFailCountByPriorityAndScopeTable::create("bono_queue_success_fail",
+                                                                                     ".1.2.826.0.1.1578918.9.2.7");
     requests_counter = SNMP::CounterByScopeTable::create("bono_incoming_requests",
                                                          ".1.2.826.0.1.1578918.9.2.4");
     overload_counter = SNMP::CounterByScopeTable::create("bono_rejected_overload",
@@ -1942,6 +1937,8 @@ int main(int argc, char* argv[])
                                                                ".1.2.826.0.1.1578918.9.3.1");
     queue_size_table = SNMP::EventAccumulatorByScopeTable::create("sprout_queue_size",
                                                                   ".1.2.826.0.1.1578918.9.3.8");
+    queue_success_fail_table = SNMP::SuccessFailCountByPriorityAndScopeTable::create("sprout_queue_success_fail",
+                                                                                     ".1.2.826.0.1.1578918.9.3.43");
     requests_counter = SNMP::CounterByScopeTable::create("sprout_incoming_requests",
                                                          ".1.2.826.0.1.1578918.9.3.6");
     overload_counter = SNMP::CounterByScopeTable::create("sprout_rejected_overload",
@@ -2002,6 +1999,7 @@ int main(int argc, char* argv[])
                                  opt.max_tokens,          // Maximum token bucket size.
                                  opt.init_token_rate,     // Initial token fill rate (per sec).
                                  opt.min_token_rate,      // Minimum token fill rate (per sec).
+                                 opt.max_token_rate,      // Maximum token fill rate (per sec).
                                  token_rate_table,        // Statistics table for token rate.
                                  smoothed_latency_scalar, // Statistics scalar for current latency.
                                  target_latency_scalar,   // Statistics scalar for target latency.
@@ -2020,7 +2018,14 @@ int main(int argc, char* argv[])
 
   // Create a DNS resolver and a SIP specific resolver.
   dns_resolver = new DnsCachedResolver(opt.dns_servers, opt.dns_timeout);
-  sip_resolver = new SIPResolver(dns_resolver, opt.sip_blacklist_duration);
+  if (opt.pcscf_enabled)
+  {
+    sip_resolver = new SIPResolver(dns_resolver, opt.sip_blacklist_duration, 0);
+  }
+  else
+  {
+    sip_resolver = new SIPResolver(dns_resolver, opt.sip_blacklist_duration);
+  }
 
   // Create a new quiescing manager instance and register our completion handler
   // with it.
@@ -2050,7 +2055,8 @@ int main(int argc, char* argv[])
                       opt.sip_tcp_send_timeout,
                       quiescing_mgr,
                       opt.billing_cdf,
-                      sproutlet_uris);
+                      sproutlet_uris,
+                      opt.enable_orig_sip_to_tel_coerce);
 
   if (status != PJ_SUCCESS)
   {
@@ -2098,7 +2104,7 @@ int main(int argc, char* argv[])
   }
 
   // Initialise the OPTIONS handling module.
-  status = init_options();
+  init_options();
 
   if (opt.hss_server != "")
   {
@@ -2132,11 +2138,6 @@ int main(int argc, char* argv[])
                                            AlarmDef::SPROUT_FIFC_STATUS,
                                            AlarmDef::CRITICAL));
 
-  mmf_service = new MMFService(new Alarm(alarm_manager,
-                                         "sprout",
-                                         AlarmDef::SPROUT_MMF_STATUS,
-                                         AlarmDef::CRITICAL));
-
   // Create ENUM service.
   if (!opt.enum_servers.empty())
   {
@@ -2157,6 +2158,13 @@ int main(int argc, char* argv[])
     enum_service = new DummyEnumService(opt.home_domain);
   }
 
+  // Create RPH service.
+  TRC_STATUS("Setting up RPH service");
+  rph_service = new RPHService(new Alarm(alarm_manager,
+                                         "sprout",
+                                         AlarmDef::SPROUT_RPH_STATUS,
+                                         AlarmDef::CRITICAL));
+
   if (opt.pcscf_enabled)
   {
     // Create an ACR factory for the P-CSCF.
@@ -2165,10 +2173,7 @@ int main(int argc, char* argv[])
                 new ACRFactory();
 
     // Launch stateful proxy as P-CSCF.
-    status = init_stateful_proxy(NULL,
-                                 NULL,
-                                 NULL,
-                                 true,
+    status = init_stateful_proxy(true,
                                  opt.upstream_proxy,
                                  opt.upstream_proxy_port,
                                  opt.upstream_proxy_connections,
@@ -2178,12 +2183,7 @@ int main(int argc, char* argv[])
                                  opt.pbxes,
                                  opt.pbx_service_route,
                                  analytics_logger,
-                                 NULL,
-                                 NULL,
-                                 NULL,
                                  pcscf_acr_factory,
-                                 NULL,
-                                 NULL,
                                  "",
                                  quiescing_mgr,
                                  opt.enabled_icscf,
@@ -2191,7 +2191,7 @@ int main(int argc, char* argv[])
                                  opt.emerg_reg_accepted);
     if (status != PJ_SUCCESS)
     {
-      TRC_ERROR("Failed to enable P-CSCF edge proxy");
+      TRC_ERROR("Failed to enable P-CSCF edge proxy. Aborting startup");
       return 1;
     }
 
@@ -2285,7 +2285,7 @@ int main(int argc, char* argv[])
   if (!loader->load(sproutlets))
   {
     CL_SPROUT_PLUGIN_FAILURE.log();
-    TRC_ERROR("Failed to successfully load plug-ins");
+    TRC_ERROR("Failed to successfully load plug-ins. Aborting startup");
     return 1;
   }
 
@@ -2320,21 +2320,23 @@ int main(int argc, char* argv[])
                                          opt.max_sproutlet_depth);
     if (sproutlet_proxy == NULL)
     {
-      TRC_ERROR("Failed to create SproutletProxy");
+      TRC_ERROR("Failed to create SproutletProxy. Aborting startup");
       return 1;
     }
   }
 
-  init_common_sip_processing(load_monitor,
-                             requests_counter,
-                             overload_counter,
+  init_common_sip_processing(requests_counter,
                              hc);
 
   init_thread_dispatcher(opt.worker_threads,
                          latency_table,
                          queue_size_table,
+                         queue_success_fail_table,
+                         overload_counter,
                          load_monitor,
-                         exception_handler);
+                         rph_service,
+                         exception_handler,
+                         opt.request_on_queue_timeout);
 
   // Create worker threads first as they take work from the PJSIP threads so
   // need to be ready.
@@ -2386,7 +2388,13 @@ int main(int argc, char* argv[])
 
   AoRTimeoutTask::Config aor_timeout_config(local_sdm,
                                             remote_sdms,
-                                            hss_connection);
+                                            hss_connection,
+                                            fifc_service,
+                                            IFCConfiguration(opt.apply_fallback_ifcs,
+                                                             opt.reject_if_no_matching_ifcs,
+                                                             opt.dummy_app_server,
+                                                             NULL,
+                                                             NULL));
   AuthTimeoutTask::Config auth_timeout_config(local_impi_store,
                                               hss_connection);
 
@@ -2523,8 +2531,8 @@ int main(int argc, char* argv[])
   delete chronos_connection;
   delete hss_connection;
   delete fifc_service;
-  delete mmf_service;
   delete sifc_service;
+  delete rph_service;
   delete quiescing_mgr;
   delete exception_handler;
   delete load_monitor;
