@@ -99,7 +99,8 @@ SPROUT_COMMON_SOURCES := logger.cpp \
                          aor.cpp \
                          astaire_aor_store.cpp \
                          sprout_xml_utils.cpp \
-                         rphservice.cpp
+                         rphservice.cpp \
+                         rina_transport.cpp
 
 sprout_SOURCES := ${SPROUT_COMMON_SOURCES} \
                   snmp_counter_table.cpp \

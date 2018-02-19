@@ -87,6 +87,7 @@ extern "C" {
 #include "sprout_alarmdefinition.h"
 #include "sproutlet_options.h"
 #include "astaire_impistore.h"
+#include "rina_transport.h"
 
 enum OptionTypes
 {
@@ -140,8 +141,11 @@ enum OptionTypes
   OPT_ORIG_SIP_TO_TEL_COERCE,
   OPT_REQUEST_ON_QUEUE_TIMEOUT,
   OPT_BLACKLISTED_SCSCFS,
-  OPT_RINA_LOCAL_APPL,
-  OPT_RINA_REMOTE_APPL
+  OPT_RINA_HTTP_DIF,
+  OPT_RINA_HTTP_LOCAL_APPL,
+  OPT_RINA_HTTP_REMOTE_APPL,
+  OPT_RINA_SIP_DIF,
+  OPT_RINA_SIP_LOCAL_APPL,
 };
 
 
@@ -230,8 +234,11 @@ const static struct pj_getopt_option long_opt[] =
   { "request-on-queue-timeout",     required_argument, 0, OPT_REQUEST_ON_QUEUE_TIMEOUT},
   { "blacklisted-scscfs",           required_argument, 0, OPT_BLACKLISTED_SCSCFS},
   { "enable-orig-sip-to-tel-coerce",no_argument,       0, OPT_ORIG_SIP_TO_TEL_COERCE},
-  { "rina-local-appl",              required_argument, 0, OPT_RINA_LOCAL_APPL},
-  { "rina-remote-appl",             required_argument, 0, OPT_RINA_REMOTE_APPL},
+  { "rina-dif",                     required_argument, 0, OPT_RINA_HTTP_DIF},
+  { "rina-local-appl",              required_argument, 0, OPT_RINA_HTTP_LOCAL_APPL},
+  { "rina-remote-appl",             required_argument, 0, OPT_RINA_HTTP_REMOTE_APPL},
+  { "rina-sip-dif",                 required_argument, 0, OPT_RINA_SIP_DIF},
+  { "rina-sip-local-appl",          required_argument, 0, OPT_RINA_SIP_LOCAL_APPL},
   { NULL,                           0,                 0, 0}
 };
 
@@ -1254,12 +1261,24 @@ static pj_status_t init_options(int argc, char* argv[], struct options* options)
       }
       break;
 
-    case OPT_RINA_LOCAL_APPL:
-      options->rina_local_appl = std::string(pj_optarg);
+    case OPT_RINA_HTTP_DIF:
+      options->rina_http_dif = std::string(pj_optarg);
       break;
 
-    case OPT_RINA_REMOTE_APPL:
-      options->rina_remote_appl = std::string(pj_optarg);
+    case OPT_RINA_HTTP_LOCAL_APPL:
+      options->rina_http_local_appl = std::string(pj_optarg);
+      break;
+
+    case OPT_RINA_HTTP_REMOTE_APPL:
+      options->rina_http_remote_appl = std::string(pj_optarg);
+      break;
+
+    case OPT_RINA_SIP_DIF:
+      options->rina_sip_dif = std::string(pj_optarg);
+      break;
+
+    case OPT_RINA_SIP_LOCAL_APPL:
+      options->rina_sip_local_appl = std::string(pj_optarg);
       break;
 
     case OPT_LISTEN_PORT:
@@ -1723,8 +1742,11 @@ int main(int argc, char* argv[])
   opt.homestead_timeout = 750;
   opt.enable_orig_sip_to_tel_coerce = false;
   opt.request_on_queue_timeout = 4000;
-  opt.rina_local_appl = "sprout.IPCP";
-  opt.rina_remote_appl = "homestead-server";
+  opt.rina_http_dif = "http.DIF";
+  opt.rina_http_local_appl = "sprout.IPCP";
+  opt.rina_http_remote_appl = "homestead-server";
+  opt.rina_sip_dif = "sip.DIF";
+  opt.rina_sip_local_appl = "sprout.IPCP";
 
   status = init_logging_options(argc, argv, &opt);
 
@@ -2128,8 +2150,9 @@ int main(int argc, char* argv[])
                                        hss_comm_monitor,
                                        sifc_service,
                                        opt.homestead_timeout,
-                                       opt.rina_local_appl,
-                                       opt.rina_remote_appl);
+                                       opt.rina_http_dif,
+                                       opt.rina_http_local_appl,
+                                       opt.rina_http_remote_appl);
   }
 
   // Create FIFC service
@@ -2164,6 +2187,19 @@ int main(int argc, char* argv[])
                                          "sprout",
                                          AlarmDef::SPROUT_RPH_STATUS,
                                          AlarmDef::CRITICAL));
+
+  pj_bool_t rina_sip_transport_enabled =
+    ((opt.rina_sip_dif != "") && (opt.rina_sip_local_appl != ""));
+  if (rina_sip_transport_enabled)
+  {
+    status = init_rina_transport(opt.rina_sip_dif, opt.rina_sip_local_appl);
+    if (status != PJ_SUCCESS)
+    {
+      TRC_ERROR("Error initializing RINA transport, %s",
+                PJUtils::pj_status_to_string(status).c_str());
+      return 1;
+    }
+  }
 
   if (opt.pcscf_enabled)
   {
@@ -2521,6 +2557,11 @@ int main(int argc, char* argv[])
     }
     destroy_stateful_proxy();
     delete pcscf_acr_factory;
+  }
+
+  if (rina_sip_transport_enabled)
+  {
+    destroy_rina_transport();
   }
 
   destroy_options();

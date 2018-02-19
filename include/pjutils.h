@@ -32,6 +32,13 @@ extern "C" {
 
 namespace PJUtils {
 
+// Define an "IP" protocol type for RINA.  This is a bit dodgy because RINA
+// isn't IP-based.  However, it allows us to resolve SIP URIs into RINA
+// AddrInfos and hence plumb RINA through easily.  Note that this value must
+// not conflict with IPPROTO_TCP (6) or IPPROTO_UDP (17)... or arguably any
+// other IPPROTO_* values defined in netinet/in.h.
+static const int IPPROTO_RINA = 254;
+
 static const int DEFAULT_RETRIES = 5;
 
 pj_status_t init();

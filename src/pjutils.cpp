@@ -31,6 +31,7 @@ extern "C" {
 #include "enumservice.h"
 #include "uri_classifier.h"
 #include "thread_dispatcher.h"
+#include "rina_transport.h"
 
 
 static void on_tsx_state(pjsip_transaction*, pjsip_event*);
@@ -946,7 +947,7 @@ void PJUtils::resolve(const std::string& name,
                       int transport,
                       int retries,
                       std::vector<AddrInfo>& servers,
-                      int allowed_host_state)
+int allowed_host_state)
 {
   BaseAddrIterator* servers_iter = resolve_iter(name,
                                                 port,
@@ -968,21 +969,41 @@ BaseAddrIterator* PJUtils::resolve_next_hop_iter(pjsip_tx_data* tdata,
   std::string name = std::string(next_hop->host.ptr, next_hop->host.slen);
   int port = next_hop->port;
   int transport = -1;
-  if (pj_stricmp2(&next_hop->transport_param, "TCP") == 0)
+  BaseAddrIterator* targets_iter;
+  if (pj_stricmp2(&next_hop->transport_param, "RINA") == 0)
   {
-    transport = IPPROTO_TCP;
+    AddrInfo ai;
+    ai.address.af = AF_INET6;
+    memcpy(ai.address.addr.ipv6.s6_addr,
+           name.c_str(),
+           name.length() < 16 ? name.length() : 16);
+    if (name.length() < 16) {
+      ai.address.addr.ipv6.s6_addr[name.length()] = '\0';
+    }
+    ai.port = port;
+    ai.transport = PJUtils::IPPROTO_RINA;
+    std::vector<AddrInfo> targets;
+    targets.push_back(ai);
+    targets_iter = new SimpleAddrIterator(targets);
   }
-  else if (pj_stricmp2(&next_hop->transport_param, "UDP") == 0)
+  else
   {
-    transport = IPPROTO_UDP;
-  }
+    if (pj_stricmp2(&next_hop->transport_param, "TCP") == 0)
+    {
+      transport = IPPROTO_TCP;
+    }
+    else if (pj_stricmp2(&next_hop->transport_param, "UDP") == 0)
+    {
+      transport = IPPROTO_UDP;
+    }
 
-  BaseAddrIterator* targets_iter = stack_data.sipresolver->resolve_iter(name,
-                                                                        stack_data.addr_family,
-                                                                        port,
-                                                                        transport,
-                                                                        allowed_host_state,
-                                                                        trail);
+    targets_iter = stack_data.sipresolver->resolve_iter(name,
+                                                        stack_data.addr_family,
+                                                        port,
+                                                        transport,
+                                                        allowed_host_state,
+                                                        trail);
+  }
 
   TRC_INFO("Resolved destination URI %s",
            PJUtils::uri_to_string(PJSIP_URI_IN_ROUTING_HDR,
@@ -1080,6 +1101,7 @@ void PJUtils::set_dest_info(pjsip_tx_data* tdata, const AddrInfo& ai)
   {
     // IPv6 address.
     tdata->dest_info.addr.entry[0].type =
+                         (ai.transport == PJUtils::IPPROTO_RINA) ? (pjsip_transport_type_e)PJSIP_TRANSPORT_RINA :
                          (ai.transport == IPPROTO_TCP) ? PJSIP_TRANSPORT_TCP6 :
                                                          PJSIP_TRANSPORT_UDP6;
     tdata->dest_info.addr.entry[0].addr.ipv6.sin6_family = pj_AF_INET6();

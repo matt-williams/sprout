@@ -187,8 +187,11 @@ get_daemon_args()
         [ -z "$sprout_chronos_callback_uri" ] || sprout_chronos_callback_uri_arg="--sprout-chronos-callback-uri=$sprout_chronos_callback_uri"
         [ -z "$dummy_app_server" ] || dummy_app_server_arg="--dummy-app-server=$dummy_app_server"
         [ -z "$sprout_request_on_queue_timeout" ] || request_on_queue_timeout_arg="--request-on-queue-timeout=$sprout_request_on_queue_timeout"
-        [ -z "$rina_local_appl" ] || rina_local_appl_arg="--rina-local-appl=$rina_local_appl"
-        [ -z "$rina_remote_appl" ] || rina_remote_appl_arg="--rina-remote-appl=$rina_remote_appl"
+        [ -z "$sprout_rina_http_dif" ] || rina_http_dif_arg="--rina-http-dif=$sprout_rina_http_dif"
+        [ -z "$sprout_rina_http_local_appl" ] || rina_http_local_appl_arg="--rina-http-local-appl=$sprout_rina_http_local_appl"
+        [ -z "$sprout_rina_http_remote_appl" ] || rina_http_remote_appl_arg="--rina-http-remote-appl=$sprout_rina_http_remote_appl"
+        [ -z "$sprout_rina_sip_dif" ] || rina_sip_dif_arg="--rina-sip-dif=$sprout_rina_sip_dif"
+        [ -z "$sprout_rina_sip_local_appl" ] || rina_sip_local_appl_arg="--rina-sip-local-appl=$sprout_rina_sip_local_appl"
 
         DAEMON_ARGS="
                      --domain=$home_domain
@@ -241,8 +244,11 @@ get_daemon_args()
                      --log-level=$log_level
                      --alias=$public_ip,$public_hostname,$alias_list
                      --homestead-timeout=$sprout_homestead_timeout_ms
-                     $rina_local_appl_arg
-                     $rina_remote_appl_arg"
+                     $rina_http_dif_arg
+                     $rina_http_local_appl_arg
+                     $rina_http_remote_appl_arg
+                     $rina_sip_dif_arg
+                     $rina_sip_local_appl_arg"
 
         if [ -n "$reg_max_expires" ]
         then

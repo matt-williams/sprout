@@ -141,8 +141,11 @@ struct options
   int                                  request_on_queue_timeout;
   std::set<std::string>                blacklisted_scscfs;
   bool                                 enable_orig_sip_to_tel_coerce;
-  std::string                          rina_local_appl;
-  std::string                          rina_remote_appl;
+  std::string                          rina_http_dif;
+  std::string                          rina_http_local_appl;
+  std::string                          rina_http_remote_appl;
+  std::string                          rina_sip_dif;
+  std::string                          rina_sip_local_appl;
 };
 
 // Objects that must be shared with dynamically linked sproutlets must be
