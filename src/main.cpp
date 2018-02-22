@@ -1742,11 +1742,11 @@ int main(int argc, char* argv[])
   opt.homestead_timeout = 750;
   opt.enable_orig_sip_to_tel_coerce = false;
   opt.request_on_queue_timeout = 4000;
-  opt.rina_http_dif = "http.DIF";
-  opt.rina_http_local_appl = "sprout.IPCP";
-  opt.rina_http_remote_appl = "homestead-server";
-  opt.rina_sip_dif = "sip.DIF";
-  opt.rina_sip_local_appl = "sprout.IPCP";
+  opt.rina_http_dif = "";
+  opt.rina_http_local_appl = "";
+  opt.rina_http_remote_appl = "";
+  opt.rina_sip_dif = "";
+  opt.rina_sip_local_appl = "";
 
   status = init_logging_options(argc, argv, &opt);
 
