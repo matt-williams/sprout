@@ -21,7 +21,7 @@
 	url = git@github.com:openssl/openssl.git
 [submodule "modules/pjsip"]
 	path = modules/pjsip
-	url = git@github.com:Metaswitch/pjsip-upstream.git
+	url = git@github.com:matt-williams/pjsip-upstream.git
 [submodule "modules/restund"]
 	path = modules/restund
 	url = git@github.com:Metaswitch/restund.git

@@ -234,9 +234,9 @@ const static struct pj_getopt_option long_opt[] =
   { "request-on-queue-timeout",     required_argument, 0, OPT_REQUEST_ON_QUEUE_TIMEOUT},
   { "blacklisted-scscfs",           required_argument, 0, OPT_BLACKLISTED_SCSCFS},
   { "enable-orig-sip-to-tel-coerce",no_argument,       0, OPT_ORIG_SIP_TO_TEL_COERCE},
-  { "rina-dif",                     required_argument, 0, OPT_RINA_HTTP_DIF},
-  { "rina-local-appl",              required_argument, 0, OPT_RINA_HTTP_LOCAL_APPL},
-  { "rina-remote-appl",             required_argument, 0, OPT_RINA_HTTP_REMOTE_APPL},
+  { "rina-http-dif",                required_argument, 0, OPT_RINA_HTTP_DIF},
+  { "rina-http-local-appl",         required_argument, 0, OPT_RINA_HTTP_LOCAL_APPL},
+  { "rina-http-remote-appl",        required_argument, 0, OPT_RINA_HTTP_REMOTE_APPL},
   { "rina-sip-dif",                 required_argument, 0, OPT_RINA_SIP_DIF},
   { "rina-sip-local-appl",          required_argument, 0, OPT_RINA_SIP_LOCAL_APPL},
   { NULL,                           0,                 0, 0}
@@ -2192,12 +2192,34 @@ int main(int argc, char* argv[])
     ((opt.rina_sip_dif != "") && (opt.rina_sip_local_appl != ""));
   if (rina_sip_transport_enabled)
   {
+    TRC_STATUS("Initializing RINA transport - application %s, DIF %s",
+               opt.rina_sip_local_appl.c_str(),
+               opt.rina_sip_dif.c_str());
     status = init_rina_transport(opt.rina_sip_dif, opt.rina_sip_local_appl);
     if (status != PJ_SUCCESS)
     {
       TRC_ERROR("Error initializing RINA transport, %s",
                 PJUtils::pj_status_to_string(status).c_str());
       return 1;
+    }
+
+    TRC_STATUS("Starting RINA transport listening - application %s, DIF %s",
+               opt.rina_sip_local_appl.c_str(),
+               opt.rina_sip_dif.c_str());
+    pj_str_t rina_sip_local_appl;
+    pj_cstr(&rina_sip_local_appl, strdup(opt.rina_sip_local_appl.c_str()));
+    pj_str_t rina_sip_dif;
+    pj_cstr(&rina_sip_dif, strdup(opt.rina_sip_dif.c_str()));
+    status = pjsip_rina_transport_start(stack_data.endpt,
+                                        &rina_sip_local_appl,
+                                        &rina_sip_dif,
+                                        &stack_data.rina_factory);
+    // TODO: Shut down rina_factory cleanly.
+
+    if (status != PJ_SUCCESS)
+    {
+      TRC_ERROR("Failed to start RINA transport, %s",
+                PJUtils::pj_status_to_string(status).c_str());
     }
   }
 

@@ -3161,7 +3161,7 @@ pj_status_t init_stateful_proxy(pj_bool_t enable_edge_proxy,
   upstream_proxy = (pjsip_uri*)pjsip_sip_uri_create(stack_data.pool, PJ_FALSE);
   ((pjsip_sip_uri*)upstream_proxy)->host = pj_strdup3(stack_data.pool, upstream_proxy_arg.c_str());
   ((pjsip_sip_uri*)upstream_proxy)->port = upstream_proxy_port;
-  ((pjsip_sip_uri*)upstream_proxy)->transport_param = pj_str("TCP");
+  ((pjsip_sip_uri*)upstream_proxy)->transport_param = pj_str("RINA"); // pj_str("TCP");
   ((pjsip_sip_uri*)upstream_proxy)->lr_param = 1;
 
   // Create a flow table object to manage the client flow records
@@ -3187,7 +3187,7 @@ pj_status_t init_stateful_proxy(pj_bool_t enable_edge_proxy,
         upstream_proxy_recycle,
         stack_data.pool,
         stack_data.endpt,
-        stack_data.pcscf_trusted_tcp_factory,
+        (stack_data.rina_factory != NULL) ? stack_data.rina_factory : stack_data.pcscf_trusted_tcp_factory,
         sprout_ip_tbl);
     upstream_conn_pool->init();
   }

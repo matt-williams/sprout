@@ -43,6 +43,7 @@ struct stack_data_struct
   pjsip_tpfactory     *pcscf_trusted_tcp_factory;
   int                  scscf_port;
   pjsip_tpfactory     *scscf_trusted_tcp_factory;
+  pjsip_tpfactory     *rina_factory;
   std::map<int, pjsip_tpfactory*> sproutlets;
   int                  sas_logging_module_id;
 

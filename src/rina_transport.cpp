@@ -356,7 +356,7 @@ PJ_DEF(pj_status_t) pjsip_rina_transport_start2(
 
     /* Fill in the addr_name from the local application too. */
     pj_strdup(pool, &listener->factory.addr_name.host, &listener->appl);
-    listener->factory.addr_name.port = 5060;
+    listener->factory.addr_name.port = 5052; // TODO: Support 5054 for S-CSCF as well
 
     pj_ansi_snprintf(listener->factory.obj_name,
 		     sizeof(listener->factory.obj_name),

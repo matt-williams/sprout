@@ -24,6 +24,7 @@ extern "C" {
 #include "utils.h"
 #include "pjutils.h"
 #include "sip_connection_pool.h"
+#include "rina_transport.h"
 
 SIPConnectionPool::SIPConnectionPool(pjsip_host_port* target,
                                int num_connections,
@@ -179,29 +180,46 @@ pj_status_t SIPConnectionPool::resolve_host(const pj_str_t* host,
 
 pj_status_t SIPConnectionPool::create_connection(int hash_slot)
 {
-  // Resolve the target host to an IP address.
-  pj_sockaddr remote_addr;
-  pj_status_t status = resolve_host(&_target.host, _target.port, &remote_addr);
+//  // Resolve the target host to an IP address.
+//  pj_sockaddr remote_addr;
+//  pj_status_t status = resolve_host(&_target.host, _target.port, &remote_addr);
+//
+//  if (status != PJ_SUCCESS)
+//  {
+//    TRC_ERROR("Failed to resolve %.*s to an IP address - %s",
+//              _target.host.slen, _target.host.ptr,
+//              PJUtils::pj_status_to_string(status).c_str());
+//    return status;
+//  }
+//
+//  // Call TPMGR to create a new transport connection.
+//  pjsip_transport* tp;
+//  pjsip_tpselector tp_sel;
+//  tp_sel.type = PJSIP_TPSELECTOR_LISTENER;
+//  tp_sel.u.listener = _tpfactory;
+//  status = pjsip_tpmgr_acquire_transport(pjsip_endpt_get_tpmgr(_endpt),
+//                                         (remote_addr.addr.sa_family == pj_AF_INET6()) ?
+//                                           PJSIP_TRANSPORT_TCP6 : PJSIP_TRANSPORT_TCP,
+//                                         &remote_addr,
+//                                         (remote_addr.addr.sa_family == pj_AF_INET6()) ?
+//                                           sizeof(pj_sockaddr_in6) : sizeof(pj_sockaddr_in),
+//                                         &tp_sel,
+//                                         &tp);
 
-  if (status != PJ_SUCCESS)
-  {
-    TRC_ERROR("Failed to resolve %.*s to an IP address - %s",
-              _target.host.slen, _target.host.ptr,
-              PJUtils::pj_status_to_string(status).c_str());
-    return status;
-  }
+  // Fill in remote_addr from the target.  This is a big hack.
+  pj_sockaddr remote_addr;
+  pj_sockaddr_init(pj_AF_INET6(), &remote_addr, NULL, 0);
+  memcpy(&remote_addr.ipv6.sin6_addr, _target.host.ptr, _target.host.slen < 16 ? _target.host.slen : 16);
 
   // Call TPMGR to create a new transport connection.
   pjsip_transport* tp;
   pjsip_tpselector tp_sel;
   tp_sel.type = PJSIP_TPSELECTOR_LISTENER;
   tp_sel.u.listener = _tpfactory;
-  status = pjsip_tpmgr_acquire_transport(pjsip_endpt_get_tpmgr(_endpt),
-                                         (remote_addr.addr.sa_family == pj_AF_INET6()) ?
-                                           PJSIP_TRANSPORT_TCP6 : PJSIP_TRANSPORT_TCP,
+  pj_status_t status = pjsip_tpmgr_acquire_transport(pjsip_endpt_get_tpmgr(_endpt),
+                                         (pjsip_transport_type_e)PJSIP_TRANSPORT_RINA,
                                          &remote_addr,
-                                         (remote_addr.addr.sa_family == pj_AF_INET6()) ?
-                                           sizeof(pj_sockaddr_in6) : sizeof(pj_sockaddr_in),
+                                         sizeof(pj_sockaddr_in6),
                                          &tp_sel,
                                          &tp);
 
